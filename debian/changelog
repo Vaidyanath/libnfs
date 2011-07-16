@@ -1,0 +1,5 @@
+libnfs (0.0~git20110716.8c27363-1) UNRELEASED; urgency=low
+
+  * Initial release. (Closes: #634086)
+
+ -- Andres Mejia <amejia@debian.org>  Sat, 16 Jul 2011 19:25:21 -0400

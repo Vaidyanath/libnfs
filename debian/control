@@ -1,0 +1,35 @@
+Source: libnfs
+Section: libs
+Priority: optional
+Maintainer: Andres Mejia <amejia@debian.org>
+Build-Depends: debhelper (>= 7.0.50~)
+Standards-Version: 3.9.2
+Homepage: https://github.com/sahlberg/libnfs
+
+Package: libnfs-dev
+Architecture: any
+Section: libdevel
+Depends: libnfs0 (= ${binary:Version}),
+         ${misc:Depends}
+Description: NFS client library (development files)
+ LIBNFS is a client library for accessing NFS shares over a network.
+ .
+ LIBNFS offers three different APIs, for different use :
+ 1, RAW : A fully async low level rpc library for nfs protocols
+ 2, NFS ASYNC : A fully asynchronous library for high level vfs functions
+ 3, NFS SYNC : A synchronous library for high level vfs functions
+ .
+ This package provides the necessary files needed for development.
+
+Package: libnfs0
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: NFS client library (shared library)
+ LIBNFS is a client library for accessing NFS shares over a network.
+ .
+ LIBNFS offers three different APIs, for different use :
+ 1, RAW : A fully async low level rpc library for nfs protocols
+ 2, NFS ASYNC : A fully asynchronous library for high level vfs functions
+ 3, NFS SYNC : A synchronous library for high level vfs functions
+ .
+ This package provides the shared library.
