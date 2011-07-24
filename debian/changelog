@@ -1,3 +1,10 @@
+libnfs (0.0~git20110724.48593f5-1) unstable; urgency=low
+
+  * Update to latest upstream snapshot.
+  * New snapshot installs libnfs raw headers.
+
+ -- Andres Mejia <amejia@debian.org>  Sun, 24 Jul 2011 14:16:15 -0400
+
 libnfs (0.0~git20110716.8c27363-1) unstable; urgency=low
 
   * Initial release. (Closes: #634086)
