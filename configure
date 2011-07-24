@@ -734,6 +734,7 @@ with_gnu_ld
 with_sysroot
 enable_libtool_lock
 enable_examples
+enable_tirpc
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1372,6 +1373,7 @@ Optional Features:
                           optimize for fast installation [default=yes]
   --disable-libtool-lock  avoid locking (might break parallel builds)
   --enable-examples       Build example programs
+  --enable-tirpc          enable use of TI-RPC [default=no]
 
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
@@ -11450,8 +11452,19 @@ if test x$ENABLE_EXAMPLES = xyes; then
 fi
 
 
+# Check whether --enable-tirpc was given.
+if test "${enable_tirpc+set}" = set; then :
+  enableval=$enable_tirpc; enable_tirpc=$enableval
+else
+  enable_tirpc='no'
+fi
+
+
 case $host in
   *darwin*)
+    RPCGENFLAGS=-DU_INT64_PLATTFORM_TYPE="u_int64_t"
+    ;;
+  *cygwin*)
     RPCGENFLAGS=-DU_INT64_PLATTFORM_TYPE="u_int64_t"
     ;;
   *solaris*)
@@ -11570,6 +11583,12 @@ $as_echo "#define HAVE_SOCKADDR_LEN 1" >>confdefs.h
 
 fi
 
+
+echo "Use TI-RPC: $enable_tirpc"
+if test "$enable_tirpc" = "yes"; then
+	CFLAGS="${CFLAGS} -I /usr/include/tirpc"
+	LDFLAGS="${LDFLAGS} -ltirpc"
+fi
 
 #output
 ac_config_files="$ac_config_files Makefile include/Makefile lib/Makefile mount/Makefile nfs/Makefile portmap/Makefile rquota/Makefile examples/Makefile"
