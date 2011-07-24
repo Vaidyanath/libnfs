@@ -3,8 +3,8 @@
 # Script used to generate the orig source tarball for libnfs.
 
 LIBNFS_GIT_URL="git://github.com/sahlberg/libnfs.git"
-LIBNFS_GIT_COMMIT="8c27363e21f667a01e75f585b897c3b36d8f5245"
-DATE_RETRIEVED="20110716"
+LIBNFS_GIT_COMMIT="48593f566ff9e0fee6544ba03478cb996380eaf7"
+DATE_RETRIEVED="20110724"
 COMMIT_SHORT_FORM="$(echo $LIBNFS_GIT_COMMIT | \
                      sed -e 's/^\([[:xdigit:]]\{,7\}\).*/\1/')"
 LIBNFS_VERSION="0.0~git${DATE_RETRIEVED}.${COMMIT_SHORT_FORM}"
