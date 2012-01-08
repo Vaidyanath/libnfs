@@ -1,4 +1,4 @@
-Format-Specification: http://anonscm.debian.org/viewvc/dep/web/deps/dep5.mdwn?revision=174&view=co
+Format: http://dep.debian.net/deps/dep5/
 Upstream-Name: libnfs
 Upstream-Contact: Ronnie Sahlberg <ronniesahlberg@gmail.com>
 Source: https://github.com/sahlberg/libnfs
