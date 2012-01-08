@@ -333,8 +333,9 @@ typedef opaque createverf3[NFS3_CREATEVERFSIZE];
 
 union createhow3 switch (createmode3 mode) {
 	case UNCHECKED:
-	case GUARDED:
 		sattr3       obj_attributes;
+	case GUARDED:
+		sattr3       g_obj_attributes;
 	case EXCLUSIVE:
 		createverf3  verf;
 };
@@ -556,9 +557,11 @@ struct devicedata3 {
 
 union mknoddata3 switch (ftype3 type) {
 	case NF3CHR:
+		devicedata3  chr_device;
 	case NF3BLK:
-		devicedata3  device;
+		devicedata3  blk_device;
 	case NF3SOCK:
+		sattr3       sock_attributes;
 	case NF3FIFO:
 		sattr3       pipe_attributes;
 	default:
@@ -813,7 +816,8 @@ program NFS_PROGRAM {
 		SYMLINK3res
 		NFS3_SYMLINK(SYMLINK3args)         = 10;
 
-/*		MKNOD3res NFSPROC3_MKNOD(MKNOD3args)             = 11;*/
+		MKNOD3res
+		NFS3_MKNOD(MKNOD3args)             = 11;
 
 		REMOVE3res
 		NFS3_REMOVE(REMOVE3args)           = 12;

@@ -106,6 +106,7 @@ INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
+LIBNFS_PC_REQ_PRIVATE = @LIBNFS_PC_REQ_PRIVATE@
 LIBOBJS = @LIBOBJS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
@@ -130,12 +131,17 @@ PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_URL = @PACKAGE_URL@
 PACKAGE_VERSION = @PACKAGE_VERSION@
 PATH_SEPARATOR = @PATH_SEPARATOR@
+PKG_CONFIG = @PKG_CONFIG@
+PKG_CONFIG_LIBDIR = @PKG_CONFIG_LIBDIR@
+PKG_CONFIG_PATH = @PKG_CONFIG_PATH@
 RANLIB = @RANLIB@
 RPCGENFLAGS = @RPCGENFLAGS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
+TIRPC_CFLAGS = @TIRPC_CFLAGS@
+TIRPC_LIBS = @TIRPC_LIBS@
 VERSION = @VERSION@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
@@ -192,9 +198,7 @@ top_srcdir = @top_srcdir@
 nfscdir = $(includedir)/nfsc
 dist_nfsc_HEADERS = \
 	libnfs.h \
-	libnfs-private.h \
 	libnfs-raw.h \
-	slist.h \
 	${abs_top_srcdir}/mount/libnfs-raw-mount.h \
 	${abs_top_srcdir}/portmap/libnfs-raw-portmap.h \
 	${abs_top_srcdir}/nfs/libnfs-raw-nfs.h \

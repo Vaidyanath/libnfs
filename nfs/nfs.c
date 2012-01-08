@@ -15,9 +15,14 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifdef WIN32
+#include "win32_compat.h"
+#else
+#include <sys/stat.h>
+#endif/*WIN32*/
+
 #include <stdio.h>
 #include <errno.h>
-#include <sys/stat.h>
 #include <string.h>
 #include <rpc/rpc.h>
 #include <rpc/xdr.h>
@@ -25,8 +30,6 @@
 #include "libnfs-raw.h"
 #include "libnfs-private.h"
 #include "libnfs-raw-nfs.h"
-
-
 
 char *nfsstat3_to_str(int error)
 {
@@ -212,7 +215,7 @@ int rpc_nfs_access_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 
 
 
-int rpc_nfs_read_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, off_t offset, size_t count, void *private_data)
+int rpc_nfs_read_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, uint64_t offset, uint64_t count, void *private_data)
 {
 	struct rpc_pdu *pdu;
 	READ3args args;
@@ -244,7 +247,7 @@ int rpc_nfs_read_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, o
 }
 
 
-int rpc_nfs_write_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *buf, off_t offset, size_t count, int stable_how, void *private_data)
+int rpc_nfs_write_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *buf, uint64_t offset, uint64_t count, int stable_how, void *private_data)
 {
 	struct rpc_pdu *pdu;
 	WRITE3args args;
@@ -350,7 +353,7 @@ int rpc_nfs_mkdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, 
 		return -1;
 	}
 
-	bzero(&args, sizeof(MKDIR3args));
+	memset(&args, 0, sizeof(MKDIR3args));
 	args.where.dir.data.data_len = fh->data.data_len;
 	args.where.dir.data.data_val = fh->data.data_val;
 	args.where.name = dir;
@@ -386,7 +389,7 @@ int rpc_nfs_rmdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, 
 		return -1;
 	}
 
-	bzero(&args, sizeof(RMDIR3args));
+	memset(&args, 0, sizeof(RMDIR3args));
 	args.object.dir.data.data_len = fh->data.data_len;
 	args.object.dir.data.data_val = fh->data.data_val;
 	args.object.name = dir;
@@ -419,7 +422,7 @@ int rpc_nfs_create_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 		return -1;
 	}
 
-	bzero(&args, sizeof(CREATE3args));
+	memset(&args, 0, sizeof(CREATE3args));
 	args.where.dir.data.data_len = fh->data.data_len;
 	args.where.dir.data.data_val = fh->data.data_val;
 	args.where.name = file;
@@ -444,6 +447,66 @@ int rpc_nfs_create_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 
 
 
+int rpc_nfs_mknod_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *file, int mode, int major, int minor, void *private_data)
+{
+	struct rpc_pdu *pdu;
+	MKNOD3args args;
+
+	pdu = rpc_allocate_pdu(rpc, NFS_PROGRAM, NFS_V3, NFS3_MKNOD, cb, private_data, (xdrproc_t)xdr_MKNOD3res, sizeof(MKNOD3res));
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for nfs/mknod call");
+		return -1;
+	}
+
+	memset(&args, 0, sizeof(MKNOD3args));
+	args.where.dir.data.data_len = fh->data.data_len;
+	args.where.dir.data.data_val = fh->data.data_val;
+	args.where.name = file;
+	switch (mode & S_IFMT) {
+	case S_IFCHR:
+		args.what.type = NF3CHR;
+		args.what.mknoddata3_u.chr_device.dev_attributes.mode.set_it = 1;
+		args.what.mknoddata3_u.chr_device.dev_attributes.mode.set_mode3_u.mode = mode & (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH);
+		args.what.mknoddata3_u.chr_device.spec.specdata1 = major;
+		args.what.mknoddata3_u.chr_device.spec.specdata2 = minor;
+		break;
+	case S_IFBLK:
+		args.what.type = NF3BLK;
+		args.what.mknoddata3_u.blk_device.dev_attributes.mode.set_it = 1;
+		args.what.mknoddata3_u.blk_device.dev_attributes.mode.set_mode3_u.mode = mode & (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH);
+		args.what.mknoddata3_u.blk_device.spec.specdata1 = major;
+		args.what.mknoddata3_u.blk_device.spec.specdata2 = minor;
+	case S_IFSOCK:
+		args.what.type = NF3SOCK;
+		args.what.mknoddata3_u.sock_attributes.mode.set_it = 1;
+		args.what.mknoddata3_u.sock_attributes.mode.set_mode3_u.mode = mode & (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH);
+		break;
+	case S_IFIFO:
+		args.what.type = NF3FIFO;
+		args.what.mknoddata3_u.pipe_attributes.mode.set_it = 1;
+		args.what.mknoddata3_u.pipe_attributes.mode.set_mode3_u.mode = mode & (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH);
+		break;
+	default:
+		rpc_set_error(rpc, "Invalid file type for nfs/mknod call");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	if (xdr_MKNOD3args(&pdu->xdr, &args) == 0) {
+		rpc_set_error(rpc, "XDR error: Failed to encode MKNOD3args");
+		rpc_free_pdu(rpc, pdu);
+		return -2;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Out of memory. Failed to queue pdu for nfs/mknod call");
+		rpc_free_pdu(rpc, pdu);
+		return -3;
+	}
+
+	return 0;
+}
+
 
 int rpc_nfs_remove_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *file, void *private_data)
 {
@@ -456,7 +519,7 @@ int rpc_nfs_remove_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 		return -1;
 	}
 
-	bzero(&args, sizeof(REMOVE3args));
+	memset(&args, 0, sizeof(REMOVE3args));
 	args.object.dir.data.data_len = fh->data.data_len;
 	args.object.dir.data.data_val = fh->data.data_val;
 	args.object.name = file;
@@ -476,7 +539,6 @@ int rpc_nfs_remove_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 	return 0;
 }
 
-
 int rpc_nfs_readdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, uint64_t cookie, char *cookieverf, int count, void *private_data)
 {
 	struct rpc_pdu *pdu;
@@ -488,7 +550,7 @@ int rpc_nfs_readdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh
 		return -1;
 	}
 
-	bzero(&args, sizeof(READDIR3args));
+	memset(&args, 0, sizeof(READDIR3args));
 	args.dir.data.data_len = fh->data.data_len;
 	args.dir.data.data_val = fh->data.data_val;
 	args.cookie = cookie;
@@ -503,6 +565,40 @@ int rpc_nfs_readdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh
 
 	if (rpc_queue_pdu(rpc, pdu) != 0) {
 		rpc_set_error(rpc, "Out of memory. Failed to queue pdu for nfs/readdir call");
+		rpc_free_pdu(rpc, pdu);
+		return -3;
+	}
+
+	return 0;
+}
+
+int rpc_nfs_readdirplus_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, uint64_t cookie, char *cookieverf, int count, void *private_data)
+{
+	struct rpc_pdu *pdu;
+	READDIRPLUS3args args;
+
+	pdu = rpc_allocate_pdu(rpc, NFS_PROGRAM, NFS_V3, NFS3_READDIRPLUS, cb, private_data, (xdrproc_t)xdr_READDIRPLUS3res, sizeof(READDIRPLUS3res));
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for nfs/readdirplus call");
+		return -1;
+	}
+
+	memset(&args, 0, sizeof(READDIRPLUS3args));
+	args.dir.data.data_len = fh->data.data_len;
+	args.dir.data.data_val = fh->data.data_val;
+	args.cookie = cookie;
+	memcpy(&args.cookieverf, cookieverf, sizeof(cookieverf3)); 
+	args.dircount = count;
+	args.maxcount = count;
+
+	if (xdr_READDIRPLUS3args(&pdu->xdr, &args) == 0) {
+		rpc_set_error(rpc, "XDR error: Failed to encode READDIRPLUS3args");
+		rpc_free_pdu(rpc, pdu);
+		return -2;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Out of memory. Failed to queue pdu for nfs/readdirplus call");
 		rpc_free_pdu(rpc, pdu);
 		return -3;
 	}
@@ -609,7 +705,7 @@ int rpc_nfs_symlink_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh
 		return -1;
 	}
 
-	bzero(&args, sizeof(SYMLINK3args));
+	memset(&args, 0, sizeof(SYMLINK3args));
 	args.where.dir.data.data_len = fh->data.data_len;
 	args.where.dir.data.data_val = fh->data.data_val;
 	args.where.name = newname;
@@ -646,7 +742,7 @@ int rpc_nfs_rename_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *old
 		return -1;
 	}
 
-	bzero(&args, sizeof(RENAME3args));
+	memset(&args, 0, sizeof(RENAME3args));
 	args.from.dir.data.data_len = olddir->data.data_len;
 	args.from.dir.data.data_val = olddir->data.data_val;
 	args.from.name = oldname;
@@ -683,7 +779,7 @@ int rpc_nfs_link_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *file,
 		return -1;
 	}
 
-	bzero(&args, sizeof(LINK3args));
+	memset(&args, 0, sizeof(LINK3args));
 	args.file.data.data_len = file->data.data_len;
 	args.file.data.data_val = file->data.data_val;
 	args.link.dir.data.data_len = newdir->data.data_len;

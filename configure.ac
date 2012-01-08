@@ -1,5 +1,5 @@
 AC_PREREQ(2.50)
-AC_INIT([libnfs], [0.0.0])
+AC_INIT([libnfs], [1.2.0], [ronniesahlberg@gmail.com])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign])
 AC_CANONICAL_HOST
@@ -11,11 +11,15 @@ AC_PROG_CC
 AC_PROG_LIBTOOL
 
 AM_PROG_CC_C_O
+PKG_PROG_PKG_CONFIG
 
 # Work around stupid autoconf default cflags. pt 2
 if test "$SAVE_CFLAGS" = "x"; then
   CFLAGS=""
 fi
+
+# We always want 64 bit file offsets
+CFLAGS="${CFLAGS} -D_FILE_OFFSET_BITS=64"
 
 AC_CHECK_PROG([HAVE_RPCGEN], [rpcgen], [yes], [no])
 if test x$HAVE_RPCGEN != xyes; then
@@ -49,6 +53,7 @@ case $host in
     ;;
   *solaris*)
     AC_CHECK_HEADERS([sys/filio.h])
+    AC_CHECK_HEADERS([sys/sockio.h])
     if test x$ENABLE_EXAMPLES = xyes; then
       AC_CHECK_LIB([socket], [main], , [AC_MSG_ERROR([Can not find required library])])
       AC_CHECK_LIB([nsl],    [main], , [AC_MSG_ERROR([Can not find required library])])
@@ -70,11 +75,17 @@ AC_CHECK_MEMBER([struct sockaddr.sa_len],
 #include <sys/socket.h>
 ])
 
-echo "Use TI-RPC: $enable_tirpc"
+LIBNFS_PC_REQ_PRIVATE=
+
 if test "$enable_tirpc" = "yes"; then
-	CFLAGS="${CFLAGS} -I /usr/include/tirpc"
-	LDFLAGS="${LDFLAGS} -ltirpc"
+	PKG_CHECK_MODULES(TIRPC, libtirpc, [],
+		AC_MSG_ERROR([unable to locate libtirpc files]))
+	CFLAGS="${CFLAGS} ${TIRPC_CFLAGS}"
+	LIBS="${LIBS} ${TIRPC_LIBS}"
+	LIBNFS_PC_REQ_PRIVATE="${LIBNFS_PC_REQ_PRIVATE} libtirpc"
 fi
+
+AC_SUBST(LIBNFS_PC_REQ_PRIVATE)
 
 #output
 AC_CONFIG_FILES([Makefile]
@@ -87,4 +98,4 @@ AC_CONFIG_FILES([Makefile]
                 [examples/Makefile]
                )
 
-AC_OUTPUT
+AC_OUTPUT([libnfs.pc])

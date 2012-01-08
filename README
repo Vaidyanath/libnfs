@@ -35,6 +35,19 @@ ports from connecting.
 These servers require you use the "insecure" export option in /etc/exports
 in order to allow libnfs clients to be able to connect.
 
+Some versions of Linux support special capabilities that can be assigned to
+programs to allow non-root users to bind to system ports.
+This is set up by running 
+    sudo setcap 'cap_net_bind_service=+ep' /path/to/executable
+When libnfs is linked against an executable with this special capability
+assigned to it, libnfs may be able to use system ports even when executing
+under the privilege of a non-root user account.
+
+This is highly non-portable so IF this works on your linux system, count
+yourself lucky.
+
+
+
 PLATFORM support
 =================
 As of now this is tested with linux, MacOSX and Apple iOS.
@@ -44,6 +57,8 @@ Cygwin: - tested under 64bit win2k8.
 MacOSX: - tested with SDK 10.4 (under Snow Leopard) - should also work with later SDKs and 64Bit
 iOS:    - tested with iOS SDK 4.2 - running on iOS 4.3.x
 FreeBSD:- tested with 8.2
+OpenSolaris
+Windows:- tested on Windows 7 64 and Windows XP 32 using Visual Studio 10 (see README.win32.txt for build instructions)
 
 
 Cygwin

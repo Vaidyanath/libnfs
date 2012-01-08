@@ -15,6 +15,10 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifdef WIN32
+#include "win32_compat.h"
+#endif/*WIN32*/
+
 #include <stdio.h>
 #include <errno.h>
 #include <rpc/rpc.h>
@@ -23,7 +27,6 @@
 #include "libnfs-raw.h"
 #include "libnfs-private.h"
 #include "libnfs-raw-mount.h"
-
 
 int rpc_mount_null_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 {
