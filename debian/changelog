@@ -1,3 +1,9 @@
+libnfs (1.2.0-1) UNRELEASED; urgency=low
+
+  * Prepare for new upstream release.
+
+ -- Andres Mejia <amejia@debian.org>  Sun, 08 Jan 2012 13:14:36 -0500
+
 libnfs (0.0~git20110724.48593f5-1) unstable; urgency=low
 
   * Update to latest upstream snapshot.
