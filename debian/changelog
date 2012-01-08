@@ -1,3 +1,9 @@
+libnfs (1.2.0-2) UNRELEASED; urgency=low
+
+  * Include pkgconfig file in dev package.
+
+ -- Andres Mejia <amejia@debian.org>  Sun, 08 Jan 2012 15:44:30 -0500
+
 libnfs (1.2.0-1) unstable; urgency=low
 
   * Prepare new upstream release. (Closes: #644482)

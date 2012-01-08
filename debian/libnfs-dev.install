@@ -1,3 +1,4 @@
 usr/include
+usr/lib/*/pkgconfig
 usr/lib/*/libnfs.so
 usr/lib/*/libnfs.a
