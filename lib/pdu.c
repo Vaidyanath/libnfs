@@ -14,9 +14,16 @@
    You should have received a copy of the GNU Lesser General Public License
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
+#ifdef WIN32
+#include "win32_compat.h"
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
+#endif
+#else
+#include <strings.h>
+#endif/*WIN32*/
 
 #include <stdio.h>
-#include <strings.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <rpc/rpc.h>
@@ -41,7 +48,7 @@ struct rpc_pdu *rpc_allocate_pdu(struct rpc_context *rpc, int program, int versi
 		rpc_set_error(rpc, "Out of memory: Failed to allocate pdu structure");
 		return NULL;
 	}
-	bzero(pdu, sizeof(struct rpc_pdu));
+	memset(pdu, 0, sizeof(struct rpc_pdu));
 	pdu->xid                = rpc->xid++;
 	pdu->cb                 = cb;
 	pdu->private_data       = private_data;
@@ -53,7 +60,7 @@ struct rpc_pdu *rpc_allocate_pdu(struct rpc_context *rpc, int program, int versi
 		xdr_setpos(&pdu->xdr, 4); /* skip past the record marker */
 	}
 
-	bzero(&msg, sizeof(struct rpc_msg));
+	memset(&msg, 0, sizeof(struct rpc_msg));
 	msg.rm_xid = pdu->xid;
         msg.rm_direction = CALL;
 	msg.rm_call.cb_rpcvers = RPC_MSG_VERSION;
@@ -134,11 +141,6 @@ int rpc_get_pdu_size(char *buf)
 
 	size = ntohl(*(uint32_t *)buf);
 
-	if ((size & 0x80000000) == 0) {
-		/* cant handle oncrpc fragments */
-		return -1;
-	}
-
 	return (size & 0x7fffffff) + 4;
 }
 
@@ -146,7 +148,7 @@ static int rpc_process_reply(struct rpc_context *rpc, struct rpc_pdu *pdu, XDR *
 {
 	struct rpc_msg msg;
 
-	bzero(&msg, sizeof(struct rpc_msg));
+	memset(&msg, 0, sizeof(struct rpc_msg));
 	msg.acpted_rply.ar_verf = _null_auth;
 	if (pdu->xdr_decode_bufsize > 0) {
 		if (pdu->xdr_decode_buf != NULL) {
@@ -158,7 +160,7 @@ static int rpc_process_reply(struct rpc_context *rpc, struct rpc_pdu *pdu, XDR *
 			pdu->cb(rpc, RPC_STATUS_ERROR, "Failed to allocate buffer for decoding of XDR reply", pdu->private_data);
 			return 0;
 		}
-		bzero(pdu->xdr_decode_buf, pdu->xdr_decode_bufsize);
+		memset(pdu->xdr_decode_buf, 0, pdu->xdr_decode_bufsize);
 	}
 	msg.acpted_rply.ar_results.where = pdu->xdr_decode_buf;
 	msg.acpted_rply.ar_results.proc  = pdu->xdr_decode_fn;
@@ -207,10 +209,11 @@ int rpc_process_pdu(struct rpc_context *rpc, char *buf, int size)
 {
 	struct rpc_pdu *pdu;
 	XDR xdr;
-	int pos, recordmarker;
+	int pos, recordmarker = 0;
 	unsigned int xid;
+	char *reasbuf = NULL;
 
-	bzero(&xdr, sizeof(XDR));
+	memset(&xdr, 0, sizeof(XDR));
 
 	xdrmem_create(&xdr, buf, size, XDR_DECODE);
 	if (rpc->is_udp == 0) {
@@ -219,11 +222,50 @@ int rpc_process_pdu(struct rpc_context *rpc, char *buf, int size)
 			xdr_destroy(&xdr);
 			return -1;
 		}
+		if (!(recordmarker&0x80000000)) {
+			xdr_destroy(&xdr);
+			if (rpc_add_fragment(rpc, buf+4, size-4) != 0) {
+				rpc_set_error(rpc, "Failed to queue fragment for reassembly.");
+				return -1;
+			}
+			return 0;
+		}
 	}
+
+	/* reassembly */
+	if (recordmarker != 0 && rpc->fragments != NULL) {
+		struct rpc_fragment *fragment;
+		uint64_t total = size - 4;
+		char *ptr;
+
+		xdr_destroy(&xdr);
+		for (fragment = rpc->fragments; fragment; fragment = fragment->next) {
+			total += fragment->size;
+		}
+
+		reasbuf = malloc(total);
+		if (reasbuf == NULL) {
+			rpc_set_error(rpc, "Failed to reassemble PDU");
+			rpc_free_all_fragments(rpc);
+			return -1;
+		}
+		ptr = reasbuf;
+		for (fragment = rpc->fragments; fragment; fragment = fragment->next) {
+			memcpy(ptr, fragment->data, fragment->size);
+			ptr += fragment->size;
+		}
+		memcpy(ptr, buf + 4, size - 4);
+		xdrmem_create(&xdr, reasbuf, total, XDR_DECODE);
+		rpc_free_all_fragments(rpc);
+	}
+
 	pos = xdr_getpos(&xdr);
 	if (xdr_int(&xdr, (int *)&xid) == 0) {
 		rpc_set_error(rpc, "xdr_int reading xid failed");
 		xdr_destroy(&xdr);
+		if (reasbuf != NULL) {
+			free(reasbuf);
+		}
 		return -1;
 	}
 	xdr_setpos(&xdr, pos);
@@ -242,10 +284,16 @@ int rpc_process_pdu(struct rpc_context *rpc, char *buf, int size)
 		if (rpc->is_udp == 0 || rpc->is_broadcast == 0) {
 			rpc_free_pdu(rpc, pdu);
 		}
+		if (reasbuf != NULL) {
+			free(reasbuf);
+		}
 		return 0;
 	}
 	rpc_set_error(rpc, "No matching pdu found for xid:%d", xid);
 	xdr_destroy(&xdr);
+	if (reasbuf != NULL) {
+		free(reasbuf);
+	}
 	return -1;
 }
 

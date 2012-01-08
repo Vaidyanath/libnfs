@@ -20,6 +20,8 @@
  * protocol as well as the XDR encoded/decoded structures.
  */
 #include <stdint.h>
+#include <rpc/rpc.h>
+#include <rpc/auth.h>
 
 struct rpc_data {
        int size;
@@ -30,13 +32,13 @@ struct rpc_context;
 struct rpc_context *rpc_init_context(void);
 void rpc_destroy_context(struct rpc_context *rpc);
 
-struct AUTH;
-void rpc_set_auth(struct rpc_context *rpc, struct AUTH *auth);
+void rpc_set_auth(struct rpc_context *rpc, AUTH *auth);
 
 int rpc_get_fd(struct rpc_context *rpc);
 int rpc_which_events(struct rpc_context *rpc);
 int rpc_service(struct rpc_context *rpc, int revents);
 char *rpc_get_error(struct rpc_context *rpc);
+int rpc_queue_length(struct rpc_context *rpc);
 
 
 #define RPC_STATUS_SUCCESS	   	0
@@ -313,7 +315,7 @@ int rpc_nfs_access_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
  * RPC_STATUS_CANCEL : The connection attempt was aborted before it could complete.
  *                     data is NULL.
  */
-int rpc_nfs_read_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, off_t offset, size_t count, void *private_data);
+int rpc_nfs_read_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, uint64_t offset, uint64_t count, void *private_data);
 
 /*
  * Call NFS/WRITE
@@ -329,7 +331,7 @@ int rpc_nfs_read_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, o
  * RPC_STATUS_CANCEL : The connection attempt was aborted before it could complete.
  *                     data is NULL.
  */
-int rpc_nfs_write_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *buf, off_t offset, size_t count, int stable_how, void *private_data);
+int rpc_nfs_write_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *buf, uint64_t offset, uint64_t count, int stable_how, void *private_data);
 
 /*
  * Call NFS/COMMIT
@@ -423,6 +425,21 @@ int rpc_nfs_rmdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, 
 int rpc_nfs_create_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *name, int mode, void *private_data);
 
 
+/*
+ * Call NFS/MKNOD
+ * Function returns
+ *  0 : The call was initiated. The callback will be invoked when the call completes.
+ * <0 : An error occured when trying to set up the call. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ * RPC_STATUS_SUCCESS : We got a successful response from the nfs daemon.
+ *                      data is MKNOD3res *
+ * RPC_STATUS_ERROR   : An error occured when trying to contact the nfs daemon.
+ *                      data is the error string.
+ * RPC_STATUS_CANCEL : The connection attempt was aborted before it could complete.
+ *                     data is NULL.
+ */
+int rpc_nfs_mknod_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *file, int mode, int major, int minor, void *private_data);
 
 
 /*
@@ -444,7 +461,7 @@ int rpc_nfs_remove_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 
 
 /*
- * Call NFS/REMOVE
+ * Call NFS/READDIR
  * Function returns
  *  0 : The call was initiated. The callback will be invoked when the call completes.
  * <0 : An error occured when trying to set up the call. The callback will not be invoked.
@@ -458,6 +475,22 @@ int rpc_nfs_remove_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
  *                     data is NULL.
  */
 int rpc_nfs_readdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, uint64_t cookie, char *cookieverf, int count, void *private_data);
+
+/*
+ * Call NFS/READDIRPLUS
+ * Function returns
+ *  0 : The call was initiated. The callback will be invoked when the call completes.
+ * <0 : An error occured when trying to set up the call. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ * RPC_STATUS_SUCCESS : We got a successful response from the nfs daemon.
+ *                      data is READDIRPLUS3res *
+ * RPC_STATUS_ERROR   : An error occured when trying to contact the nfs daemon.
+ *                      data is the error string.
+ * RPC_STATUS_CANCEL : The connection attempt was aborted before it could complete.
+ *                     data is NULL.
+ */
+int rpc_nfs_readdirplus_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, uint64_t cookie, char *cookieverf, int count, void *private_data);
 
 /*
  * Call NFS/FSSTAT

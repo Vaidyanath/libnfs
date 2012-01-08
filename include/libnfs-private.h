@@ -14,7 +14,14 @@
    You should have received a copy of the GNU Lesser General Public License
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
+#include <rpc/xdr.h>
 #include <rpc/auth.h>
+
+struct rpc_fragment {
+	struct rpc_fragment *next;
+	uint64_t size;
+	char *data;
+};
 
 struct rpc_context {
 	int fd;
@@ -44,6 +51,13 @@ struct rpc_context {
        int is_udp;
        struct sockaddr *udp_dest;
        int is_broadcast;
+
+       /* track the address we connect to so we can auto-reconnect on session failure */
+       struct sockaddr_storage s;
+       int auto_reconnect;
+
+	/* fragment reassembly */
+	struct rpc_fragment *fragments;
 };
 
 struct rpc_pdu {
@@ -75,10 +89,18 @@ void rpc_set_error(struct rpc_context *rpc, char *error_string, ...);
 void nfs_set_error(struct nfs_context *nfs, char *error_string, ...);
 
 struct rpc_context *nfs_get_rpc_context(struct nfs_context *nfs);
+const char *nfs_get_server(struct nfs_context *nfs);
+const char *nfs_get_export(struct nfs_context *nfs);
 
 /* we dont want to expose UDP to normal applications/users  this is private to libnfs to use exclusively for broadcast RPC */
 int rpc_bind_udp(struct rpc_context *rpc, char *addr, int port);
 int rpc_set_udp_destination(struct rpc_context *rpc, char *addr, int port, int is_broadcast);
 struct rpc_context *rpc_init_udp_context(void);
 struct sockaddr *rpc_get_recv_sockaddr(struct rpc_context *rpc);
+
+void rpc_set_autoreconnect(struct rpc_context *rpc);
+void rpc_unset_autoreconnect(struct rpc_context *rpc);
+
+int rpc_add_fragment(struct rpc_context *rpc, char *data, uint64_t size);
+void rpc_free_all_fragments(struct rpc_context *rpc);
 

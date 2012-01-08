@@ -17,7 +17,14 @@
 
 /* Example program using the highlevel sync interface
  */
-
+#ifdef WIN32
+#include "win32_compat.h"
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#endif
+ 
 #define SERVER "10.1.1.27"
 #define EXPORT "/VIRTUAL"
 #define NFSFILE "/BOOKS/Classics/Dracula.djvu.truncated"
@@ -26,13 +33,20 @@
 #define NFSDIR "/BOOKS/Classics/"
 
 #define _GNU_SOURCE
+
+#if defined(WIN32)
+#pragma comment(lib, "ws2_32.lib")
+WSADATA wsaData;
+#else
+#include <sys/statvfs.h>
+#include <unistd.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include "libnfs.h"
 #include <rpc/rpc.h>            /* for authunix_create() */
@@ -47,23 +61,48 @@ struct client {
 };
 
 
+void PrintServerList()
+{
+  struct nfs_server_list *srvrs;
+  struct nfs_server_list *srv;
+
+  srvrs = nfs_find_local_servers();
+
+  for (srv=srvrs; srv; srv = srv->next)
+  {
+      printf("Found nfs server: %s\n", srv->addr);
+
+  }
+  free_nfs_srvr_list(srvrs);
+}
+
 char buf[3*1024*1024+337];
 
 int main(int argc _U_, char *argv[] _U_)
 {
 	struct nfs_context *nfs;
 	int i, ret;
+	uint64_t offset;
 	struct client client;
 	struct stat st;
 	struct nfsfh  *nfsfh;
 	struct nfsdir *nfsdir;
 	struct nfsdirent *nfsdirent;
+	struct statvfs svfs;
+	exports export, tmp;
+
+#if defined(WIN32)
+	if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
+		printf("Failed to start Winsock2\n");
+		exit(10);
+	}
+#endif
+
 	client.server = SERVER;
 	client.export = EXPORT;
 	client.is_finished = 0;
-	off_t offset;
-	struct statvfs svfs;
-	exports export, tmp;
+
+  PrintServerList();
 
 	export = mount_getexports(SERVER);
 	if (export != NULL) {
@@ -198,11 +237,10 @@ int main(int argc _U_, char *argv[] _U_)
 		exit(10);
 	}
 	while((nfsdirent = nfs_readdir(nfs, nfsdir)) != NULL) {
-		char *filename = NULL;
+	  char filename[1024];
 		printf("Inode:%d Name:%s ", (int)nfsdirent->inode, nfsdirent->name);
-		asprintf(&filename, "%s/%s", NFSDIR, nfsdirent->name);
+		sprintf(filename, "%s/%s", NFSDIR, nfsdirent->name);
 		ret = nfs_open(nfs, filename, O_RDONLY, &nfsfh);
-		free(filename);
 		if (ret != 0) {
 			printf("Failed to open(%s) %s\n", filename, nfs_get_error(nfs));
 			exit(10);
@@ -210,7 +248,6 @@ int main(int argc _U_, char *argv[] _U_)
 		ret = nfs_read(nfs, nfsfh, sizeof(buf), buf);
 		if (ret < 0) {
 			printf("Error reading file\n");
-			exit(10);
 		}
 		printf("Read %d bytes\n", ret);
 		ret = nfs_close(nfs, nfsfh);
