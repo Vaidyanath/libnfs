@@ -1,1 +1,1 @@
-usr/lib/libnfs.so.*
+usr/lib/*/libnfs.so.*
