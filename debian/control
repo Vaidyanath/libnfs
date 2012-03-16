@@ -9,6 +9,7 @@ Vcs-Git: git://anonscm.debian.org/collab-maint/libnfs.git
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=collab-maint/libnfs.git
 
 Package: libnfs-dev
+Multi-Arch: same
 Architecture: any
 Section: libdevel
 Depends: libnfs1 (= ${binary:Version}),

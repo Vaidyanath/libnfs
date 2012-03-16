@@ -1,3 +1,9 @@
+libnfs (1.2.0-4) unstable; urgency=low
+
+  * Allow dev package to be multiarch installable.
+
+ -- Andres Mejia <amejia@debian.org>  Fri, 16 Mar 2012 18:10:20 -0400
+
 libnfs (1.2.0-3) unstable; urgency=low
 
   * Make dpkg-source options default for packaging.
