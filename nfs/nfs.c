@@ -342,10 +342,9 @@ int rpc_nfs_setattr_async(struct rpc_context *rpc, rpc_cb cb, SETATTR3args *args
 
 
 
-int rpc_nfs_mkdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *dir, void *private_data)
+int rpc_nfs_mkdir_async(struct rpc_context *rpc, rpc_cb cb, MKDIR3args *args, void *private_data)
 {
 	struct rpc_pdu *pdu;
-	MKDIR3args args;
 
 	pdu = rpc_allocate_pdu(rpc, NFS_PROGRAM, NFS_V3, NFS3_MKDIR, cb, private_data, (xdrproc_t)xdr_MKDIR3res, sizeof(MKDIR3res));
 	if (pdu == NULL) {
@@ -353,14 +352,7 @@ int rpc_nfs_mkdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, 
 		return -1;
 	}
 
-	memset(&args, 0, sizeof(MKDIR3args));
-	args.where.dir.data.data_len = fh->data.data_len;
-	args.where.dir.data.data_val = fh->data.data_val;
-	args.where.name = dir;
-	args.attributes.mode.set_it = 1;
-	args.attributes.mode.set_mode3_u.mode = 0755;
-
-	if (xdr_MKDIR3args(&pdu->xdr, &args) == 0) {
+	if (xdr_MKDIR3args(&pdu->xdr, args) == 0) {
 		rpc_set_error(rpc, "XDR error: Failed to encode MKDIR3args");
 		rpc_free_pdu(rpc, pdu);
 		return -2;
@@ -411,10 +403,9 @@ int rpc_nfs_rmdir_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, 
 
 
 
-int rpc_nfs_create_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *file, int mode, void *private_data)
+int rpc_nfs_create_async(struct rpc_context *rpc, rpc_cb cb, CREATE3args *args, void *private_data)
 {
 	struct rpc_pdu *pdu;
-	CREATE3args args;
 
 	pdu = rpc_allocate_pdu(rpc, NFS_PROGRAM, NFS_V3, NFS3_CREATE, cb, private_data, (xdrproc_t)xdr_CREATE3res, sizeof(CREATE3res));
 	if (pdu == NULL) {
@@ -422,15 +413,7 @@ int rpc_nfs_create_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 		return -1;
 	}
 
-	memset(&args, 0, sizeof(CREATE3args));
-	args.where.dir.data.data_len = fh->data.data_len;
-	args.where.dir.data.data_val = fh->data.data_val;
-	args.where.name = file;
-	args.how.mode = UNCHECKED;
-	args.how.createhow3_u.obj_attributes.mode.set_it = 1;
-	args.how.createhow3_u.obj_attributes.mode.set_mode3_u.mode = mode;
-
-	if (xdr_CREATE3args(&pdu->xdr, &args) == 0) {
+	if (xdr_CREATE3args(&pdu->xdr, args) == 0) {
 		rpc_set_error(rpc, "XDR error: Failed to encode CREATE3args");
 		rpc_free_pdu(rpc, pdu);
 		return -2;
@@ -664,10 +647,9 @@ int rpc_nfs_fsinfo_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh,
 	return 0;
 }
 
-int rpc_nfs_readlink_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, void *private_data)
+int rpc_nfs_readlink_async(struct rpc_context *rpc, rpc_cb cb, READLINK3args *args, void *private_data)
 {
 	struct rpc_pdu *pdu;
-	READLINK3args args;
 
 	pdu = rpc_allocate_pdu(rpc, NFS_PROGRAM, NFS_V3, NFS3_READLINK, cb, private_data, (xdrproc_t)xdr_READLINK3res, sizeof(READLINK3res));
 	if (pdu == NULL) {
@@ -675,10 +657,7 @@ int rpc_nfs_readlink_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *f
 		return -1;
 	}
 
-	args.symlink.data.data_len = fh->data.data_len; 
-	args.symlink.data.data_val = fh->data.data_val; 
-
-	if (xdr_READLINK3args(&pdu->xdr, &args) == 0) {
+	if (xdr_READLINK3args(&pdu->xdr, args) == 0) {
 		rpc_set_error(rpc, "XDR error: Failed to encode READLINK3args");
 		rpc_free_pdu(rpc, pdu);
 		return -2;
@@ -694,10 +673,9 @@ int rpc_nfs_readlink_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *f
 }
 
 
-int rpc_nfs_symlink_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh, char *newname, char *oldpath, void *private_data)
+int rpc_nfs_symlink_async(struct rpc_context *rpc, rpc_cb cb, SYMLINK3args *args, void *private_data)
 {
 	struct rpc_pdu *pdu;
-	SYMLINK3args args;
 
 	pdu = rpc_allocate_pdu(rpc, NFS_PROGRAM, NFS_V3, NFS3_SYMLINK, cb, private_data, (xdrproc_t)xdr_SYMLINK3res, sizeof(SYMLINK3res));
 	if (pdu == NULL) {
@@ -705,15 +683,7 @@ int rpc_nfs_symlink_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3 *fh
 		return -1;
 	}
 
-	memset(&args, 0, sizeof(SYMLINK3args));
-	args.where.dir.data.data_len = fh->data.data_len;
-	args.where.dir.data.data_val = fh->data.data_val;
-	args.where.name = newname;
-	args.symlink.symlink_attributes.mode.set_it = 1;
-	args.symlink.symlink_attributes.mode.set_mode3_u.mode = S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH;
-	args.symlink.symlink_data = oldpath;
-
-	if (xdr_SYMLINK3args(&pdu->xdr, &args) == 0) {
+	if (xdr_SYMLINK3args(&pdu->xdr, args) == 0) {
 		rpc_set_error(rpc, "XDR error: Failed to encode SYMLINK3args");
 		rpc_free_pdu(rpc, pdu);
 		return -2;
