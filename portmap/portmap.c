@@ -46,7 +46,7 @@ int rpc_pmap_null_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 	return 0;
 }
 
-int rpc_pmap_getport_async(struct rpc_context *rpc, int program, int version, rpc_cb cb, void *private_data)
+int rpc_pmap_getport_async(struct rpc_context *rpc, int program, int version, int protocol, rpc_cb cb, void *private_data)
 {
 	struct rpc_pdu *pdu;
 	struct pmap_mapping m;
@@ -59,7 +59,7 @@ int rpc_pmap_getport_async(struct rpc_context *rpc, int program, int version, rp
 
 	m.prog = program;
 	m.vers = version;
-	m.prot = IPPROTO_TCP;
+	m.prot = protocol;
 	m.port = 0;
 	if (xdr_pmap_mapping(&pdu->xdr, &m) == 0) {
 		rpc_set_error(rpc, "XDR error: Failed to encode data for portmap/getport call");
@@ -69,6 +69,66 @@ int rpc_pmap_getport_async(struct rpc_context *rpc, int program, int version, rp
 
 	if (rpc_queue_pdu(rpc, pdu) != 0) {
 		rpc_set_error(rpc, "Failed to queue portmap/getport pdu");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
+
+int rpc_pmap_set_async(struct rpc_context *rpc, int program, int version, int protocol, int port, rpc_cb cb, void *private_data)
+{
+	struct rpc_pdu *pdu;
+	struct pmap_mapping m;
+
+	pdu = rpc_allocate_pdu(rpc, PMAP_PROGRAM, PMAP_V2, PMAP_SET, cb, private_data, (xdrproc_t)xdr_int, sizeof(uint32_t));
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for portmap/set call");
+		return -1;
+	}
+
+	m.prog = program;
+	m.vers = version;
+	m.prot = protocol;
+	m.port = port;
+	if (xdr_pmap_mapping(&pdu->xdr, &m) == 0) {
+		rpc_set_error(rpc, "XDR error: Failed to encode data for portmap/set call");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Failed to queue portmap/set pdu");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
+
+int rpc_pmap_unset_async(struct rpc_context *rpc, int program, int version, int protocol, int port, rpc_cb cb, void *private_data)
+{
+	struct rpc_pdu *pdu;
+	struct pmap_mapping m;
+
+	pdu = rpc_allocate_pdu(rpc, PMAP_PROGRAM, PMAP_V2, PMAP_UNSET, cb, private_data, (xdrproc_t)xdr_int, sizeof(uint32_t));
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for portmap/unset call");
+		return -1;
+	}
+
+	m.prog = program;
+	m.vers = version;
+	m.prot = protocol;
+	m.port = port;
+	if (xdr_pmap_mapping(&pdu->xdr, &m) == 0) {
+		rpc_set_error(rpc, "XDR error: Failed to encode data for portmap/unset call");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Failed to queue portmap/unset pdu");
 		rpc_free_pdu(rpc, pdu);
 		return -1;
 	}

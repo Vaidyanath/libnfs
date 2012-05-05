@@ -459,7 +459,7 @@ static void nfs_mount_2_cb(struct rpc_context *rpc, int status, void *command_da
 		return;
 	}
 
-	if (rpc_pmap_getport_async(rpc, MOUNT_PROGRAM, MOUNT_V3, nfs_mount_3_cb, private_data) != 0) {
+	if (rpc_pmap_getport_async(rpc, MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, nfs_mount_3_cb, private_data) != 0) {
 		data->cb(-ENOMEM, nfs, command_data, data->private_data);
 		free_nfs_cb_data(data);
 		return;
@@ -1436,10 +1436,18 @@ static void nfs_mkdir_cb(struct rpc_context *rpc _U_, int status, void *command_
 static int nfs_mkdir_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
 {
 	char *str = data->continue_data;
-	
+	MKDIR3args args;
+
 	str = &str[strlen(str) + 1];
 
-	if (rpc_nfs_mkdir_async(nfs->rpc, nfs_mkdir_cb, &data->fh, str, data) != 0) {
+	memset(&args, 0, sizeof(MKDIR3args));
+	args.where.dir.data.data_len = data->fh.data.data_len;
+	args.where.dir.data.data_val = data->fh.data.data_val;
+	args.where.name = str;
+	args.attributes.mode.set_it = 1;
+	args.attributes.mode.set_mode3_u.mode = 0755;
+
+	if (rpc_nfs_mkdir_async(nfs->rpc, nfs_mkdir_cb, &args, data) != 0) {
 		rpc_set_error(nfs->rpc, "RPC error: Failed to send MKDIR call for %s", data->path);
 		data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
 		free_nfs_cb_data(data);
@@ -1649,10 +1657,20 @@ static void nfs_creat_1_cb(struct rpc_context *rpc _U_, int status, void *comman
 static int nfs_creat_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
 {
 	char *str = data->continue_data;
-	
+	CREATE3args args;
+
 	str = &str[strlen(str) + 1];
 
-	if (rpc_nfs_create_async(nfs->rpc, nfs_creat_1_cb, &data->fh, str, data->continue_int, data) != 0) {
+
+	memset(&args, 0, sizeof(CREATE3args));
+	args.where.dir.data.data_len = data->fh.data.data_len;
+	args.where.dir.data.data_val = data->fh.data.data_val;
+	args.where.name = str;
+	args.how.mode = UNCHECKED;
+	args.how.createhow3_u.obj_attributes.mode.set_it = 1;
+	args.how.createhow3_u.obj_attributes.mode.set_mode3_u.mode = data->continue_int;
+
+	if (rpc_nfs_create_async(nfs->rpc, nfs_creat_1_cb, &args, data) != 0) {
 		rpc_set_error(nfs->rpc, "RPC error: Failed to send CREATE call for %s/%s", data->path, str);
 		data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
 		free_nfs_cb_data(data);
@@ -2402,7 +2420,12 @@ static void nfs_readlink_1_cb(struct rpc_context *rpc _U_, int status, void *com
 
 static int nfs_readlink_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
 {
-	if (rpc_nfs_readlink_async(nfs->rpc, nfs_readlink_1_cb, &data->fh, data) != 0) {
+	READLINK3args args;
+
+	args.symlink.data.data_len = data->fh.data.data_len; 
+	args.symlink.data.data_val = data->fh.data.data_val; 
+
+	if (rpc_nfs_readlink_async(nfs->rpc, nfs_readlink_1_cb, &args, data) != 0) {
 		rpc_set_error(nfs->rpc, "RPC error: Failed to send READLINK call for %s", data->path);
 		data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
 		free_nfs_cb_data(data);
@@ -2923,8 +2946,17 @@ static void nfs_symlink_cb(struct rpc_context *rpc _U_, int status, void *comman
 static int nfs_symlink_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
 {
 	struct nfs_symlink_data *symlink_data = data->continue_data;
+	SYMLINK3args sa;
 
-	if (rpc_nfs_symlink_async(nfs->rpc, nfs_symlink_cb, &data->fh, symlink_data->newpathobject, symlink_data->oldpath, data) != 0) {
+	memset(&sa, 0, sizeof(SYMLINK3args));
+	sa.where.dir.data.data_len = data->fh.data.data_len;
+	sa.where.dir.data.data_val = data->fh.data.data_val;
+	sa.where.name = symlink_data->newpathobject;
+	sa.symlink.symlink_attributes.mode.set_it = 1;
+	sa.symlink.symlink_attributes.mode.set_mode3_u.mode = S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH;
+	sa.symlink.symlink_data = symlink_data->oldpath;
+
+	if (rpc_nfs_symlink_async(nfs->rpc, nfs_symlink_cb, &sa, data) != 0) {
 		rpc_set_error(nfs->rpc, "RPC error: Failed to send SYMLINK call for %s", data->path);
 		data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
 		free_nfs_cb_data(data);
@@ -3443,7 +3475,7 @@ static void mount_export_2_cb(struct rpc_context *rpc, int status, void *command
 		return;
 	}
 
-	if (rpc_pmap_getport_async(rpc, MOUNT_PROGRAM, MOUNT_V3, mount_export_3_cb, private_data) != 0) {
+	if (rpc_pmap_getport_async(rpc, MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, mount_export_3_cb, private_data) != 0) {
 		data->cb(rpc, -ENOMEM, command_data, data->private_data);
 		free_mount_cb_data(data);
 		return;
@@ -3512,3 +3544,6 @@ const char *nfs_get_export(struct nfs_context *nfs) {
 	return nfs->export;
 }
 
+const struct nfs_fh3 *nfs_get_rootfh(struct nfs_context *nfs) {
+      return &nfs->rootfh;
+}
