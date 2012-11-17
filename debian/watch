@@ -1,2 +1,2 @@
 version=3
-https://github.com/sahlberg/libnfs/tags .*/tarball/libnfs-(\d[\d\.]+)
+https://github.com/sahlberg/libnfs/tags .*/libnfs-(\d[\d\.]+)\.tar\.gz
