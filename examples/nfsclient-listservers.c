@@ -17,16 +17,27 @@
 
 /* Example program showing sync interface to probe for all local servers
  */
+#ifdef AROS
+#include "aros_compat.h"
+#endif
+
+#ifdef WIN32
+#include "win32_compat.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "libnfs-zdr.h"
 #include "libnfs.h"
-
 
 int main(int argc _U_, char *argv[] _U_)
 {
 	struct nfs_server_list *srvrs;
 	struct nfs_server_list *srv;
+
+#ifdef AROS
+	aros_init_socket();
+#endif
 
 	srvrs = nfs_find_local_servers();	
 	for (srv=srvrs; srv; srv = srv->next) {

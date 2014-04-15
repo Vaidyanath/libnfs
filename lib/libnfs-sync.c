@@ -17,27 +17,66 @@
 /*
  * High level api to nfs filesystems
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef AROS
+#include "aros_compat.h"
+#endif
+
 #ifdef WIN32
 #include "win32_compat.h"
-#define DllExport
-#else
-#include <strings.h>
-#include <unistd.h>
-#include <sys/statvfs.h>
-#include <poll.h>
-#include <sys/ioctl.h>
-#include <netdb.h>
-#include <sys/socket.h>
+#endif
+
+#ifdef HAVE_NET_IF_H
 #include <net/if.h>
 #endif
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
+#ifdef ANDROID
+#define statvfs statfs
+#endif
+
+#ifdef HAVE_SYS_VFS_H
+#include <sys/vfs.h>
+#endif
+
+#ifdef HAVE_SYS_STATVFS_H
+#include <sys/statvfs.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>
+#endif
+
+#ifdef HAVE_SYS_SOCKET_H
+#include <sys/socket.h>
+#endif
+
+#ifdef HAVE_POLL_H
+#include <poll.h>
+#endif
+
+#ifdef HAVE_NETDB_H
+#include <netdb.h>
+#endif
+
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
+#ifdef HAVE_NETINET_IN_H
+#include <netinet/in.h>
+#endif
+
+#ifdef HAVE_STRINGS_H
+#include <strings.h>
 #endif
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -47,6 +86,7 @@
 #include <sys/sockio.h>
 #endif
 
+#include "libnfs-zdr.h"
 #include "libnfs.h"
 #include "libnfs-raw.h"
 #include "libnfs-raw-mount.h"
@@ -65,6 +105,8 @@ struct sync_cb_data {
 static void wait_for_reply(struct rpc_context *rpc, struct sync_cb_data *cb_data)
 {
 	struct pollfd pfd;
+
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
 	while (!cb_data->is_finished) {
 
@@ -134,6 +176,8 @@ int nfs_mount(struct nfs_context *nfs, const char *server, const char *export)
 	struct sync_cb_data cb_data;
 	struct rpc_context *rpc = nfs_get_rpc_context(nfs);
 
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	cb_data.is_finished = 0;
 
 	if (nfs_mount_async(nfs, server, export, mount_cb, &cb_data) != 0) {
@@ -164,11 +208,18 @@ static void stat_cb(int status, struct nfs_context *nfs, void *data, void *priva
 		nfs_set_error(nfs, "stat call failed with \"%s\"", (char *)data);
 		return;
 	}
-
-	memcpy(cb_data->return_data, data, sizeof(struct stat));
+#ifdef WIN32
+	memcpy(cb_data->return_data, data, sizeof(struct __stat64));
+#else
+  memcpy(cb_data->return_data, data, sizeof(struct stat));
+#endif
 }
 
+#ifdef WIN32
+int nfs_stat(struct nfs_context *nfs, const char *path, struct __stat64 *st)
+#else
 int nfs_stat(struct nfs_context *nfs, const char *path, struct stat *st)
+#endif
 {
 	struct sync_cb_data cb_data;
 
@@ -185,8 +236,36 @@ int nfs_stat(struct nfs_context *nfs, const char *path, struct stat *st)
 	return cb_data.status;
 }
 
+static void stat64_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
+{
+	struct sync_cb_data *cb_data = private_data;
 
+	cb_data->is_finished = 1;
+	cb_data->status = status;
 
+	if (status < 0) {
+		nfs_set_error(nfs, "stat call failed with \"%s\"", (char *)data);
+		return;
+	}
+	memcpy(cb_data->return_data, data, sizeof(struct nfs_stat_64));
+}
+
+int nfs_stat64(struct nfs_context *nfs, const char *path, struct nfs_stat_64 *st)
+{
+	struct sync_cb_data cb_data;
+
+	cb_data.is_finished = 0;
+	cb_data.return_data = st;
+
+	if (nfs_stat64_async(nfs, path, stat64_cb, &cb_data) != 0) {
+		nfs_set_error(nfs, "nfs_stat64_async failed");
+		return -1;
+	}
+
+	wait_for_nfs_reply(nfs, &cb_data);
+
+	return cb_data.status;
+}
 
 /*
  * open()
@@ -209,14 +288,14 @@ static void open_cb(int status, struct nfs_context *nfs, void *data, void *priva
 	*nfsfh = fh;
 }
 
-int nfs_open(struct nfs_context *nfs, const char *path, int mode, struct nfsfh **nfsfh)
+int nfs_open(struct nfs_context *nfs, const char *path, int flags, struct nfsfh **nfsfh)
 {
 	struct sync_cb_data cb_data;
 
 	cb_data.is_finished = 0;
 	cb_data.return_data = nfsfh;
 
-	if (nfs_open_async(nfs, path, mode, open_cb, &cb_data) != 0) {
+	if (nfs_open_async(nfs, path, flags, open_cb, &cb_data) != 0) {
 		nfs_set_error(nfs, "nfs_open_async failed");
 		return -1;
 	}
@@ -226,6 +305,38 @@ int nfs_open(struct nfs_context *nfs, const char *path, int mode, struct nfsfh *
 	return cb_data.status;
 }
 
+/*
+ * chdir()
+ */
+static void chdir_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
+{
+	struct sync_cb_data *cb_data = private_data;
+
+	cb_data->is_finished = 1;
+	cb_data->status = status;
+
+	if (status < 0) {
+		nfs_set_error(nfs, "chdir call failed with \"%s\"", (char *)data);
+		return;
+	}
+}
+
+int nfs_chdir(struct nfs_context *nfs, const char *path)
+{
+	struct sync_cb_data cb_data;
+
+	cb_data.is_finished = 0;
+
+	if (nfs_chdir_async(nfs, path, chdir_cb, &cb_data) != 0) {
+		nfs_set_error(nfs, "nfs_chdir_async failed with %s",
+			nfs_get_error(nfs));
+		return -1;
+	}
+
+	wait_for_nfs_reply(nfs, &cb_data);
+
+	return cb_data.status;
+}
 
 
 
@@ -1146,7 +1257,9 @@ int nfs_link(struct nfs_context *nfs, const char *oldpath, const char *newpath)
 void mount_getexports_cb(struct rpc_context *mount_context, int status, void *data, void *private_data)
 {
 	struct sync_cb_data *cb_data = private_data;
-	exports export = *(exports *)data;
+	exports export;
+
+	assert(mount_context->magic == RPC_CONTEXT_MAGIC);
 
 	cb_data->is_finished = 1;
 	cb_data->status = status;
@@ -1157,6 +1270,7 @@ void mount_getexports_cb(struct rpc_context *mount_context, int status, void *da
 		return;
 	}
 
+	export = *(exports *)data;
 	while (export != NULL) {
 		exports new_export;
 
@@ -1228,6 +1342,8 @@ void callit_cb(struct rpc_context *rpc, int status, void *data _U_, void *privat
 	char hostdd[16];
 	struct nfs_server_list *srvr;
 
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (status == RPC_STATUS_CANCEL) {
 		return;
 	}
@@ -1280,6 +1396,8 @@ void callit_cb(struct rpc_context *rpc, int status, void *data _U_, void *privat
 static int send_nfsd_probes(struct rpc_context *rpc, INTERFACE_INFO *InterfaceList, int numIfs, struct nfs_list_data *data)
 {
   int i=0;
+
+  assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
   for(i = 0; i < numIfs; i++) 
   {
@@ -1410,6 +1528,8 @@ struct nfs_server_list *nfs_find_local_servers(void)
 static int send_nfsd_probes(struct rpc_context *rpc, struct ifconf *ifc, struct nfs_list_data *data)
 {
 	char *ptr;
+
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
 	for (ptr =(char *)(ifc->ifc_buf); ptr < (char *)(ifc->ifc_buf) + ifc->ifc_len; ) {
 		struct ifreq *ifr;

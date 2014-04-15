@@ -22,7 +22,6 @@ THE SOFTWARE.
 */
 /*Adaptions by memphiz@xbmc.org*/
 
-#ifdef WIN32
 #ifndef win32_COMPAT_H_
 #define win32_COMPAT_H_
 #define NO_IPv6 1
@@ -33,6 +32,7 @@ THE SOFTWARE.
 #include <basetsd.h>
 #include <io.h>
 #include <sys/stat.h>
+#include <time.h>
 
 typedef int uid_t;
 typedef int gid_t;
@@ -53,11 +53,33 @@ typedef int socklen_t;
 #define F_GETFL  3
 #define F_SETFL  4
 
+#ifndef S_IFIFO
+#define S_IFIFO        0x1000  /* FIFO */
+#endif
+
+#ifndef S_IFBLK
+#define S_IFBLK        0x3000  /* Block: Is this ever set under w32? */
+#endif
+
+#ifndef S_IFSOCK
+#define S_IFSOCK 0x0           /* not defined in mingw either */
+#endif
+
+#ifndef major
+#define major(a) 0
+#endif
+
+#ifndef minor
+#define minor(a) 0
+#endif
+
 #define O_NONBLOCK 0x40000000
 #define O_SYNC 0
 
 #define MSG_DONTWAIT 0
 #define ssize_t SSIZE_T
+
+#if(_WIN32_WINNT < 0x0600)
 
 #define POLLIN      0x0001    /* There is data to read */
 #define POLLPRI     0x0002    /* There is urgent data to read */
@@ -71,6 +93,10 @@ struct pollfd {
     short events;     /* requested events */
     short revents;    /* returned events */
 };
+#endif
+
+#define close closesocket
+#define ioctl ioctlsocket
 
 /* Wrapper macros to call misc. functions win32 is missing */
 #define poll(x, y, z)        win32_poll(x, y, z)
@@ -79,5 +105,6 @@ int     win32_inet_pton(int af, const char * src, void * dst);
 int     win32_poll(struct pollfd *fds, unsigned int nfsd, int timeout);
 int     win32_gettimeofday(struct timeval *tv, struct timezone *tz);
 
+#define DllExport
+
 #endif//win32_COMPAT_H_
-#endif//WIN32

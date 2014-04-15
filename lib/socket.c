@@ -14,34 +14,62 @@
    You should have received a copy of the GNU Lesser General Public License
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
-#ifdef WIN32
-#include "win32_compat.h"
-#else
-#include <unistd.h>
-#include <poll.h>
-#include <arpa/inet.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#endif/*WIN32*/
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-#include <stdio.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <string.h>
-#include <errno.h>
-#include <rpc/rpc.h>
-#include <rpc/xdr.h>
+
+#ifdef AROS
+#include "aros_compat.h"
+#endif
+
+#ifdef WIN32
+#include "win32_compat.h"
+#endif
+
+#ifdef HAVE_ARPA_INET_H
+#include <arpa/inet.h>
+#endif
+
+#ifdef HAVE_POLL_H
+#include <poll.h>
+#endif
+
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>
+#endif
+
+#ifdef HAVE_SYS_SOCKET_H
+#include <sys/socket.h>
+#endif
+
+#ifdef HAVE_NETINET_TCP_H
+#include <netinet/tcp.h>
+#endif
+
+#ifdef HAVE_NETDB_H
+#include <netdb.h>
+#endif
+
 #ifdef HAVE_SYS_FILIO_H
 #include <sys/filio.h>
 #endif
+
 #ifdef HAVE_SYS_SOCKIO_H
 #include <sys/sockio.h>
 #endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <fcntl.h>
+#include <string.h>
+#include <errno.h>
 #include <sys/types.h>
+#include "libnfs-zdr.h"
 #include "libnfs.h"
 #include "libnfs-raw.h"
 #include "libnfs-private.h"
@@ -61,21 +89,47 @@ static void set_nonblocking(int fd)
 	int v = 0;
 #if defined(WIN32)
 	long nonblocking=1;
-	v = ioctlsocket(fd, FIONBIO,&nonblocking);
+	v = ioctl(fd, FIONBIO, &nonblocking);
 #else
 	v = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, v | O_NONBLOCK);
 #endif //FIXME
 }
 
+#ifdef HAVE_NETINET_TCP_H
+int set_tcp_sockopt(int sockfd, int optname, int value)
+{
+	int level;
+
+	#if defined(__FreeBSD__) || defined(__sun) || (defined(__APPLE__) && defined(__MACH__))
+	struct protoent *buf;
+
+	if ((buf = getprotobyname("tcp")) != NULL)
+		level = buf->p_proto;
+	else
+		return -1;
+	#else
+		level = SOL_TCP;
+	#endif
+
+	return setsockopt(sockfd, level, optname, (char *)&value, sizeof(value));
+}
+#endif
+
 int rpc_get_fd(struct rpc_context *rpc)
 {
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	return rpc->fd;
 }
 
 int rpc_which_events(struct rpc_context *rpc)
 {
-	int events = rpc->is_connected ? POLLIN : POLLOUT;
+	int events;
+
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
+	events = rpc->is_connected ? POLLIN : POLLOUT;
 
 	if (rpc->is_udp != 0) {
 		/* for udp sockets we only wait for pollin */
@@ -90,11 +144,10 @@ int rpc_which_events(struct rpc_context *rpc)
 
 static int rpc_write_to_socket(struct rpc_context *rpc)
 {
-	int64_t count;
+	int32_t count;
 
-	if (rpc == NULL) {
-		return -1;
-	}
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (rpc->fd == -1) {
 		rpc_set_error(rpc, "trying to write but not connected");
 		return -1;
@@ -105,11 +158,7 @@ static int rpc_write_to_socket(struct rpc_context *rpc)
 
 		total = rpc->outqueue->outdata.size;
 
-#if defined(WIN32)
 		count = send(rpc->fd, rpc->outqueue->outdata.data + rpc->outqueue->written, total - rpc->outqueue->written, 0);
-#else
-		count = write(rpc->fd, rpc->outqueue->outdata.data + rpc->outqueue->written, total - rpc->outqueue->written);
-#endif
 		if (count == -1) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				return 0;
@@ -134,13 +183,11 @@ static int rpc_read_from_socket(struct rpc_context *rpc)
 	int available;
 	int size;
 	int pdu_size;
-	int64_t count;
+	int32_t count;
 
-#if defined(WIN32)
-	if (ioctlsocket(rpc->fd, FIONREAD, &available) != 0) {
-#else
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (ioctl(rpc->fd, FIONREAD, &available) != 0) {
-#endif
 		rpc_set_error(rpc, "Ioctl FIONREAD returned error : %d. Closing socket.", errno);
 		return -1;
 	}
@@ -163,6 +210,7 @@ static int rpc_read_from_socket(struct rpc_context *rpc)
 		if (count < 0) {
 			rpc_set_error(rpc, "Failed recvfrom: %s", strerror(errno));
 			free(buf);
+			return -1;
 		}
 		if (rpc_process_pdu(rpc, buf, count) != 0) {
 			rpc_set_error(rpc, "Invalid/garbage pdu received from server. Ignoring PDU");
@@ -185,11 +233,7 @@ static int rpc_read_from_socket(struct rpc_context *rpc)
 	if (rpc->inpos < 4) {
 		size = 4 - rpc->inpos;
 
-#if defined(WIN32)
 		count = recv(rpc->fd, rpc->inbuf + rpc->inpos, size, 0);
-#else
-		count = read(rpc->fd, rpc->inbuf + rpc->inpos, size);
-#endif
 		if (count == -1) {
 			if (errno == EINTR) {
 				return 0;
@@ -208,7 +252,7 @@ static int rpc_read_from_socket(struct rpc_context *rpc)
 	pdu_size = rpc_get_pdu_size(rpc->inbuf);
 	if (rpc->insize < pdu_size) {
 		unsigned char *buf;
-		
+
 		buf = malloc(pdu_size);
 		if (buf == NULL) {
 			rpc_set_error(rpc, "Failed to allocate buffer of %d bytes for pdu, errno:%d. Closing socket.", pdu_size, errno);
@@ -225,11 +269,7 @@ static int rpc_read_from_socket(struct rpc_context *rpc)
 		size = rpc->insize - rpc->inpos;
 	}
 
-#if defined(WIN32)
 	count = recv(rpc->fd, rpc->inbuf + rpc->inpos, size, 0);
-#else
-	count = read(rpc->fd, rpc->inbuf + rpc->inpos, size);
-#endif
 	if (count == -1) {
 		if (errno == EINTR) {
 			return 0;
@@ -241,14 +281,17 @@ static int rpc_read_from_socket(struct rpc_context *rpc)
 	rpc->inpos += count;
 
 	if (rpc->inpos == rpc->insize) {
-		if (rpc_process_pdu(rpc, rpc->inbuf, pdu_size) != 0) {
-			rpc_set_error(rpc, "Invalid/garbage pdu received from server. Closing socket");
-			return -1;
-		}
-		free(rpc->inbuf);
+		char *buf = rpc->inbuf;
+
 		rpc->inbuf  = NULL;
 		rpc->insize = 0;
 		rpc->inpos  = 0;
+
+		if (rpc_process_pdu(rpc, buf, pdu_size) != 0) {
+			rpc_set_error(rpc, "Invalid/garbage pdu received from server. Closing socket");
+			return -1;
+		}
+		free(buf);
 	}
 
 	return 0;
@@ -258,6 +301,8 @@ static int rpc_read_from_socket(struct rpc_context *rpc)
 
 int rpc_service(struct rpc_context *rpc, int revents)
 {
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (revents & POLLERR) {
 #ifdef WIN32
 		char err = 0;
@@ -336,22 +381,44 @@ int rpc_service(struct rpc_context *rpc, int revents)
 
 void rpc_set_autoreconnect(struct rpc_context *rpc)
 {
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	rpc->auto_reconnect = 1;
 }
 
 void rpc_unset_autoreconnect(struct rpc_context *rpc)
 {
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	rpc->auto_reconnect = 0;
 }
+
+void rpc_set_tcp_syncnt(struct rpc_context *rpc, int v)
+{
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
+	rpc->tcp_syncnt = v;
+}
+
+#ifndef TCP_SYNCNT
+#define TCP_SYNCNT        7
+#endif
 
 static int rpc_connect_sockaddr_async(struct rpc_context *rpc, struct sockaddr_storage *s)
 {
 	int socksize;
 
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	switch (s->ss_family) {
 	case AF_INET:
 		socksize = sizeof(struct sockaddr_in);
 		rpc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#ifdef HAVE_NETINET_TCP_H
+		if (rpc->tcp_syncnt != RPC_PARAM_UNDEFINED) {
+			set_tcp_sockopt(rpc->fd, TCP_SYNCNT, rpc->tcp_syncnt);
+		}
+#endif
 		break;
 	default:
 		rpc_set_error(rpc, "Can not handle AF_FAMILY:%d", s->ss_family);
@@ -363,8 +430,6 @@ static int rpc_connect_sockaddr_async(struct rpc_context *rpc, struct sockaddr_s
 		return -1;
 	}
 
-
-#if !defined(WIN32)
 	/* Some systems allow you to set capabilities on an executable
 	 * to allow the file to be executed with privilege to bind to
 	 * privileged system ports, even if the user is not root.
@@ -379,51 +444,58 @@ static int rpc_connect_sockaddr_async(struct rpc_context *rpc, struct sockaddr_s
 	 * On linux, use
 	 *    sudo setcap 'cap_net_bind_service=+ep' /path/executable
 	 * to make the executable able to bind to a system port.
+	 *
+	 * On Windows, there is no concept of privileged ports. Thus
+	 * binding will usually succeed.
 	 */
-	if (1) {
-		static int port = 200;
-		int i;
-		int one = 1;
+	{
+		struct sockaddr_in sin;
+		static int portOfs = 0;
+		const int firstPort = 512;	/* >= 512 according to Sun docs */
+		const int portCount = IPPORT_RESERVED - firstPort;
+		int startOfs, port, rc;
 
-		setsockopt(rpc->fd, SOL_SOCKET, SO_REUSEADDR, (char *)&one, sizeof(one));
-
-		for (i = 0; i < 500; i++) {
-			struct sockaddr_in sin;
-
-			if(++port > 700) port = 200;
-
-			memset(&sin, 0, sizeof(sin));
-			sin.sin_port        = htons(port);
-			sin.sin_family      = AF_INET;
-			sin.sin_addr.s_addr = 0;
-
-			if (bind(rpc->fd, (struct sockaddr *)&sin, sizeof(struct sockaddr_in)) != 0 && errno != EACCES) {
-				/* we didnt get EACCES, so try again */
-				continue;
-			}
-			break;
+		if (portOfs == 0) {
+			portOfs = time(NULL) % 400;
 		}
-	}
+		startOfs = portOfs;
+		do {
+			rc = -1;
+			port = htons(firstPort + portOfs);
+			portOfs = (portOfs + 1) % portCount;
+
+			/* skip well-known ports */
+			if (!getservbyport(port, "tcp")) {
+				memset(&sin, 0, sizeof(sin));
+				sin.sin_port        = port;
+				sin.sin_family      = AF_INET;
+				sin.sin_addr.s_addr = 0;
+
+				rc = bind(rpc->fd, (struct sockaddr *)&sin, sizeof(struct sockaddr_in));
+#if !defined(WIN32)
+				/* we got EACCES, so don't try again */
+				if (rc != 0 && errno == EACCES)
+					break;
 #endif
+			}
+		} while (rc != 0 && portOfs != startOfs);
+	}
 
 	set_nonblocking(rpc->fd);
 
-#if defined(WIN32)
-	if (connect(rpc->fd, (struct sockaddr *)s, socksize) == 0 && errno != EINPROGRESS   )
-#else
-	if (connect(rpc->fd, (struct sockaddr *)s, socksize) != 0 && errno != EINPROGRESS) 
-#endif
-	{
-	  rpc_set_error(rpc, "connect() to server failed. %s(%d)", strerror(errno), errno);
+	if (connect(rpc->fd, (struct sockaddr *)s, socksize) != 0 && errno != EINPROGRESS) {
+		rpc_set_error(rpc, "connect() to server failed. %s(%d)", strerror(errno), errno);
 		return -1;
-	}		
+	}
 
 	return 0;
-}	    
+}
 
 int rpc_connect_async(struct rpc_context *rpc, const char *server, int port, rpc_cb cb, void *private_data)
 {
 	struct sockaddr_in *sin = (struct sockaddr_in *)&rpc->s;
+
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
 	if (rpc->fd != -1) {
 		rpc_set_error(rpc, "Trying to connect while already connected");
@@ -461,18 +533,16 @@ int rpc_connect_async(struct rpc_context *rpc, const char *server, int port, rpc
 	}
 
 	return 0;
-}	    
+}
 
 int rpc_disconnect(struct rpc_context *rpc, char *error)
 {
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	rpc_unset_autoreconnect(rpc);
 
 	if (rpc->fd != -1) {
-#if defined(WIN32)
-		closesocket(rpc->fd);
-#else
 		close(rpc->fd);
-#endif
 	}
 	rpc->fd  = -1;
 
@@ -485,6 +555,8 @@ int rpc_disconnect(struct rpc_context *rpc, char *error)
 
 static void reconnect_cb(struct rpc_context *rpc, int status, void *data _U_, void *private_data)
 {
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (status != RPC_STATUS_SUCCESS) {
 		rpc_error_all_pdus(rpc, "RPC ERROR: Failed to reconnect async");
 		return;
@@ -499,12 +571,10 @@ static int rpc_reconnect_requeue(struct rpc_context *rpc)
 {
 	struct rpc_pdu *pdu;
 
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (rpc->fd != -1) {
-#if defined(WIN32)
-		closesocket(rpc->fd);
-#else
 		close(rpc->fd);
-#endif
 	}
 	rpc->fd  = -1;
 
@@ -538,6 +608,8 @@ int rpc_bind_udp(struct rpc_context *rpc, char *addr, int port)
 	struct addrinfo *ai = NULL;
 	char service[6];
 
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (rpc->is_udp == 0) {
 		rpc_set_error(rpc, "Cant not bind UDP. Not UDP context");
 		return -1;
@@ -546,7 +618,7 @@ int rpc_bind_udp(struct rpc_context *rpc, char *addr, int port)
 	sprintf(service, "%d", port);
 	if (getaddrinfo(addr, service, NULL, &ai) != 0) {
 		rpc_set_error(rpc, "Invalid address:%s. "
-			"Can not resolv into IPv4/v6 structure.");
+			      "Can not resolv into IPv4/v6 structure.", addr);
 		return -1;
  	}
 
@@ -554,13 +626,13 @@ int rpc_bind_udp(struct rpc_context *rpc, char *addr, int port)
 	case AF_INET:
 		rpc->fd = socket(ai->ai_family, SOCK_DGRAM, 0);
 		if (rpc->fd == -1) {
-			rpc_set_error(rpc, "Failed to create UDP socket: %s", strerror(errno)); 
+			rpc_set_error(rpc, "Failed to create UDP socket: %s", strerror(errno));
 			freeaddrinfo(ai);
 			return -1;
 		}
 
 		if (bind(rpc->fd, (struct sockaddr *)ai->ai_addr, sizeof(struct sockaddr_in)) != 0) {
-			rpc_set_error(rpc, "Failed to bind to UDP socket: %s",strerror(errno)); 
+			rpc_set_error(rpc, "Failed to bind to UDP socket: %s",strerror(errno));
 			freeaddrinfo(ai);
 			return -1;
 		}
@@ -581,6 +653,8 @@ int rpc_set_udp_destination(struct rpc_context *rpc, char *addr, int port, int i
 	struct addrinfo *ai = NULL;
 	char service[6];
 
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	if (rpc->is_udp == 0) {
 		rpc_set_error(rpc, "Can not set destination sockaddr. Not UDP context");
 		return -1;
@@ -589,7 +663,7 @@ int rpc_set_udp_destination(struct rpc_context *rpc, char *addr, int port, int i
 	sprintf(service, "%d", port);
 	if (getaddrinfo(addr, service, NULL, &ai) != 0) {
 		rpc_set_error(rpc, "Invalid address:%s. "
-			"Can not resolv into IPv4/v6 structure.");
+			      "Can not resolv into IPv4/v6 structure.", addr);
 		return -1;
  	}
 
@@ -600,6 +674,7 @@ int rpc_set_udp_destination(struct rpc_context *rpc, char *addr, int port, int i
 	rpc->udp_dest = malloc(ai->ai_addrlen);
 	if (rpc->udp_dest == NULL) {
 		rpc_set_error(rpc, "Out of memory. Failed to allocate sockaddr structure");
+		freeaddrinfo(ai);
 		return -1;
 	}
 	memcpy(rpc->udp_dest, ai->ai_addr, ai->ai_addrlen);
@@ -613,6 +688,8 @@ int rpc_set_udp_destination(struct rpc_context *rpc, char *addr, int port, int i
 
 struct sockaddr *rpc_get_recv_sockaddr(struct rpc_context *rpc)
 {
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	return (struct sockaddr *)&rpc->udp_src;
 }
 
@@ -621,6 +698,8 @@ int rpc_queue_length(struct rpc_context *rpc)
 	int i=0;
 	struct rpc_pdu *pdu;
 
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
 	for(pdu = rpc->outqueue; pdu; pdu = pdu->next) {
 		i++;
 	}
@@ -628,4 +707,11 @@ int rpc_queue_length(struct rpc_context *rpc)
 		i++;
 	}
 	return i;
+}
+
+void rpc_set_fd(struct rpc_context *rpc, int fd)
+{
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
+	rpc->fd = fd;
 }

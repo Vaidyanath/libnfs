@@ -1,14 +1,21 @@
-noinst_PROGRAMS = nfsclient-async nfsclient-raw nfsclient-sync nfsclient-bcast nfsclient-listservers
+noinst_PROGRAMS = nfsclient-async nfsclient-raw nfsclient-sync nfsclient-bcast nfsclient-listservers nfs-ls nfs-cp nfs-io
 
 AM_CPPFLAGS = \
 	-I$(abs_top_srcdir)/include \
-	-I../mount \
-	-I../nfs \
-	-I../rquota \
-	-I../portmap \
+	-I$(abs_top_srcdir)/include/nfsc \
+	-I$(abs_top_srcdir)/mount \
+	-I$(abs_top_srcdir)/nfs \
+	-I$(abs_top_srcdir)/portmap \
+	-I$(abs_top_srcdir)/rquota \
 	"-D_U_=__attribute__((unused))"
 
-AM_LDFLAGS = ../lib/.libs/libnfs.la
+AM_LDFLAGS = ../lib/.libs/libnfs.la -lpopt
+
+nfs_ls_SOURCES = nfs-ls.c
+
+nfs_cp_SOURCES = nfs-cp.c
+
+nfs_io_SOURCES = nfs-io.c
 
 nfsclient_async_SOURCES = nfsclient-async.c
 
