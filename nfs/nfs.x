@@ -1,5 +1,8 @@
 /* NFS part from rfc 1813, NFSACL part is from wireshark sources */
 
+/*
+ * NFS v3 Definitions
+ */
 const NFS3_FHSIZE    = 64;    /* Maximum bytes in a V3 file handle */
 const NFS3_WRITEVERFSIZE = 8;
 const NFS3_CREATEVERFSIZE = 8;
@@ -7,8 +10,7 @@ const NFS3_COOKIEVERFSIZE = 8;
 
 typedef opaque cookieverf3[NFS3_COOKIEVERFSIZE];
 
-
-/*unsigned hyper can be overridden by giving rpcgen -DU_INT64_PLATTFORM_TYPE="foo" - for plattforms
+/*unsigned hyper can be overridden by giving rpcgen -DU_INT64_PLATTFORM_TYPE="
   where rpcgen doesn't know anything about hyper
   default to unsigned hyper as of rfc 1813 */
 #ifndef U_INT64_PLATTFORM_TYPE
@@ -16,6 +18,7 @@ typedef opaque cookieverf3[NFS3_COOKIEVERFSIZE];
 #endif/*U_INT64_PLATTFORM_TYPE*/
 
 typedef U_INT64_PLATTFORM_TYPE uint64;
+
 typedef uint64 cookie3;
 
 struct nfs_fh3 {
@@ -39,44 +42,40 @@ enum ftype3 {
 	NF3FIFO   = 7
 };
 
-typedef unsigned long uint32;
+typedef unsigned int mode3;
 
-typedef long int32;
+typedef unsigned int uid3;
 
-typedef uint32 mode3;
-
-typedef uint32 uid3;
-
-typedef uint32 gid3;
+typedef unsigned int gid3;
 
 typedef uint64 size3;
 
 typedef uint64 fileid3;
 
 struct specdata3 {
-	uint32     specdata1;
-	uint32     specdata2;
+	unsigned int specdata1;
+	unsigned int specdata2;
 };
 
 struct nfstime3 {
-	uint32   seconds;
-	uint32   nseconds;
+	unsigned int seconds;
+	unsigned int nseconds;
 };
 
 struct fattr3 {
-	ftype3     type;
-	mode3      mode;
-	uint32     nlink;
-	uid3       uid;
-	gid3       gid;
-	size3      size;
-	size3      used;
-	specdata3  rdev;
-	uint64     fsid;
-	fileid3    fileid;
-	nfstime3   atime;
-	nfstime3   mtime;
-	nfstime3   ctime;
+	ftype3       type;
+	mode3        mode;
+	unsigned int nlink;
+	uid3         uid;
+	gid3         gid;
+	size3        size;
+	size3        used;
+	specdata3    rdev;
+	uint64       fsid;
+	fileid3      fileid;
+	nfstime3     atime;
+	nfstime3     mtime;
+	nfstime3     ctime;
 };
 
 union post_op_attr switch (bool attributes_follow) {
@@ -127,7 +126,7 @@ enum stable_how {
 
 typedef uint64 offset3;
 
-typedef uint32 count3;
+typedef unsigned int count3;
 
 struct wcc_attr {
 	size3       size;
@@ -228,13 +227,13 @@ const ACCESS3_DELETE  = 0x0010;
 const ACCESS3_EXECUTE = 0x0020;
 
 struct ACCESS3args {
-     nfs_fh3  object;
-     uint32   access;
+     nfs_fh3      object;
+     unsigned int access;
 };
 
 struct ACCESS3resok {
-     post_op_attr   obj_attributes;
-     uint32         access;
+     post_op_attr obj_attributes;
+     unsigned int access;
 };
 
 struct ACCESS3resfail {
@@ -424,16 +423,16 @@ struct FSINFO3args {
 
 struct FSINFO3resok {
 	post_op_attr obj_attributes;
-	uint32       rtmax;
-	uint32       rtpref;
-	uint32       rtmult;
-	uint32       wtmax;
-	uint32       wtpref;
-	uint32       wtmult;
-	uint32       dtpref;
+	unsigned int rtmax;
+	unsigned int rtpref;
+	unsigned int rtmult;
+	unsigned int wtmax;
+	unsigned int wtpref;
+	unsigned int wtmult;
+	unsigned int dtpref;
 	size3        maxfilesize;
 	nfstime3     time_delta;
-	uint32       properties;
+	unsigned int properties;
 };
 
 struct FSINFO3resfail {
@@ -460,7 +459,7 @@ struct FSSTAT3resok {
 	size3        tfiles;
 	size3        ffiles;
 	size3        afiles;
-	uint32       invarsec;
+	unsigned int invarsec;
 };
 
 struct FSSTAT3resfail {
@@ -480,8 +479,8 @@ struct PATHCONF3args {
 
 struct PATHCONF3resok {
 	post_op_attr obj_attributes;
-	uint32       linkmax;
-	uint32       name_max;
+	unsigned int linkmax;
+	unsigned int name_max;
 	bool         no_trunc;
 	bool         chown_restricted;
 	bool         case_insensitive;
@@ -781,7 +780,338 @@ union SETATTR3res switch (nfsstat3 status) {
 		SETATTR3resfail resfail;
 };
 
+/*
+ * NFS v2 Definitions
+ * We share many definitions from v3
+ */
+const FHSIZE2 = 32;
+typedef opaque fhandle2[FHSIZE2];
+
+enum ftype2 {
+	NF2NON    = 0,
+	NF2REG    = 1,
+	NF2DIR    = 2,
+	NF2BLK    = 3,
+	NF2CHR    = 4,
+	NF2LNK    = 5
+};
+
+struct fattr2 {
+	ftype2       type;
+	unsigned int mode;
+	unsigned int nlink;
+	unsigned int uid;
+	unsigned int gid;
+	unsigned int size;
+	unsigned int blocksize;
+	unsigned int rdev;
+	unsigned int blocks;
+	unsigned int fsid;
+	unsigned int fileid;
+	nfstime3 atime;
+	nfstime3 mtime;
+	nfstime3 ctime;
+};
+
+struct sattr2 {
+	unsigned int mode;
+	unsigned int uid;
+	unsigned int gid;
+	unsigned int size;
+	nfstime3     atime;
+	nfstime3     mtime;
+};
+
+const MAXNAMLEN2 = 255;
+typedef string filename2<MAXNAMLEN2>;
+
+const MAXPATHLEN2 = 1024;
+typedef string path2<MAXPATHLEN2>;
+
+const NFSMAXDATA2 = 8192;
+typedef opaque nfsdata2<NFSMAXDATA2>;
+
+const NFSCOOKIESIZE2 = 4;
+typedef opaque nfscookie2[NFSCOOKIESIZE2];
+
+struct entry2 {
+	unsigned int fileid;
+	filename2 name;
+	nfscookie2 cookie;
+	entry2 *nextentry;
+};
+
+struct diropargs2 {
+	fhandle2  dir;
+	filename2 name;
+};
+
+struct GETATTR2args {
+	fhandle2 fhandle;
+};
+
+struct GETATTR2resok {
+	fattr2 attributes;
+};
+
+union GETATTR2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		GETATTR2resok resok;
+	default:
+		void;
+};
+
+struct SETATTR2args {
+	fhandle2 fhandle;
+        sattr2 attributes;
+};
+
+struct SETATTR2resok {
+	fattr2 attributes;
+};
+
+union SETATTR2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		SETATTR2resok resok;
+	default:
+		void;
+};
+
+struct LOOKUP2args {
+	diropargs2 what;
+};
+
+struct LOOKUP2resok {
+	fhandle2 file;
+	fattr2   attributes;
+};
+
+union LOOKUP2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		LOOKUP2resok resok;
+	default:
+		void;
+};
+
+struct READLINK2args {
+	fhandle2 file;
+};
+
+struct READLINK2resok {
+	path2 data;
+};
+
+union READLINK2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		READLINK2resok resok;
+	default:
+		void;
+};
+
+struct READ2args {
+	fhandle2 file;
+	unsigned int offset;
+	unsigned int count;
+	unsigned int totalcount;
+};
+
+struct READ2resok {
+	fattr2   attributes;
+	nfsdata2 data;
+};
+
+union READ2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		READ2resok resok;
+	default:
+		void;
+};
+
+struct WRITE2args {
+	fhandle2 file;
+	unsigned int beginoffset;
+	unsigned int offset;
+	unsigned int totalcount;
+	nfsdata2 data;
+};
+
+struct WRITE2resok {
+	fattr2 attributes;
+};
+
+union WRITE2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		WRITE2resok resok;
+	default:
+		void;
+};
+
+struct CREATE2args {
+	diropargs2 where;
+        sattr2 attributes;
+};
+
+struct CREATE2resok {
+	fhandle2 file;
+	fattr2   attributes;
+};
+
+union CREATE2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		CREATE2resok resok;
+	default:
+		void;
+};
+
+struct REMOVE2args {
+	diropargs2 what;
+};
+
+struct REMOVE2res {
+	nfsstat3 status;
+};
+
+struct RENAME2args {
+	diropargs2 from;
+	diropargs2 to;
+};
+
+struct RENAME2res {
+	nfsstat3 status;
+};
+
+struct LINK2args {
+	fhandle2 from;
+	diropargs2 to;
+};
+
+struct LINK2res {
+	nfsstat3 status;
+};
+
+struct SYMLINK2args {
+	diropargs2 from;
+	path2 to;
+        sattr2 attributes;
+};
+
+struct SYMLINK2res {
+	nfsstat3 status;
+};
+
+struct MKDIR2args {
+	diropargs2 where;
+        sattr2 attributes;
+};
+
+struct MKDIR2resok {
+	fhandle2 file;
+	fattr2   attributes;
+};
+
+union MKDIR2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		MKDIR2resok resok;
+	default:
+		void;
+};
+
+struct RMDIR2args {
+	diropargs2 what;
+};
+
+struct RMDIR2res {
+	nfsstat3 status;
+};
+
+struct READDIR2args {
+	fhandle2 dir;
+	nfscookie2 cookie;
+	unsigned int count;
+};
+
+struct READDIR2resok {
+	entry2 *entries;
+	bool    eof;
+};
+
+union READDIR2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		READDIR2resok resok;
+	default:
+		void;
+};
+
+struct STATFS2args {
+	fhandle2 dir;
+};
+
+struct STATFS2resok {
+	unsigned int tsize;
+	unsigned int bsize;
+	unsigned int blocks;
+	unsigned int bfree;
+	unsigned int bavail;
+};
+
+union STATFS2res switch (nfsstat3 status) {
+	case NFS3_OK:
+		STATFS2resok resok;
+	default:
+		void;
+};
+
 program NFS_PROGRAM {
+	version NFS_V2 {
+		void
+		NFS2_NULL(void)                    = 0;
+
+		GETATTR2res
+		NFS2_GETATTR(GETATTR2args)         = 1;
+
+		SETATTR2res
+		NFS2_SETATTR(SETATTR2args)         = 2;
+
+		LOOKUP2res
+		NFS2_LOOKUP(LOOKUP2args)           = 4;
+
+		READLINK2res
+		NFS2_READLINK(READLINK2args)       = 5;
+
+		READ2res
+		NFS2_READ(READ2args)               = 6;
+
+		WRITE2res
+		NFS2_WRITE(WRITE2args)             = 8;
+
+		CREATE2res
+		NFS2_CREATE(CREATE2args)           = 9;
+
+		REMOVE2res
+		NFS2_REMOVE(REMOVE2args)           = 10;
+
+		RENAME2res
+		NFS2_RENAME(RENAME2args)           = 11;
+
+		LINK2res
+		NFS2_LINK(LINK2args)               = 12;
+
+		SYMLINK2res
+		NFS2_SYMLINK(SYMLINK2args)         = 13;
+
+		MKDIR2res
+		NFS2_MKDIR(MKDIR2args)             = 14;
+
+		RMDIR2res
+		NFS2_RMDIR(RMDIR2args)             = 15;
+
+		READDIR2res
+		NFS2_READDIR(READDIR2args)         = 16;
+
+		STATFS2res
+		NFS2_STATFS(STATFS2args)           = 17;
+	} = 2;
+
 	version NFS_V3 {
 		void
 		NFS3_NULL(void)                    = 0;
@@ -878,8 +1208,8 @@ const NFSACL_PERM_EXEC  = 0x01;
 
 struct nfsacl_ace {
        enum nfsacl_type type;
-       uint32_t id;
-       uint32_t perm;
+       unsigned int id;
+       unsigned int perm;
 };
 
 const NFSACL_MASK_ACL_ENTRY         = 0x0001;
@@ -888,22 +1218,42 @@ const NFSACL_MASK_ACL_DEFAULT_ENTRY = 0x0004;
 const NFSACL_MASK_ACL_DEFAULT_COUNT = 0x0008;
 
 struct GETACL3args {
-	nfs_fh3     dir;
-	uint32	    mask;
+	nfs_fh3      dir;
+	unsigned int mask;
 };
 
 struct GETACL3resok {
-	post_op_attr   attr;
-	uint32_t       mask;
-	uint32_t       ace_count;
-	struct nfsacl_ace ace<>;
-	uint32_t       default_ace_count;
-	struct nfsacl_ace default_ace<>;
+	post_op_attr       attr;
+	unsigned int       mask;
+	unsigned int       ace_count;
+	struct nfsacl_ace  ace<>;
+	unsigned int       default_ace_count;
+	struct nfsacl_ace  default_ace<>;
 };
 
 union GETACL3res switch (nfsstat3 status) {
 case NFS3_OK:
      GETACL3resok   resok;
+default:
+     void;
+};
+
+struct SETACL3args {
+	nfs_fh3            dir;
+	unsigned int       mask;
+	unsigned int       ace_count;
+	struct nfsacl_ace  ace<>;
+	unsigned int       default_ace_count;
+	struct nfsacl_ace  default_ace<>;
+};
+
+struct SETACL3resok {
+	post_op_attr   attr;
+};
+
+union SETACL3res switch (nfsstat3 status) {
+case NFS3_OK:
+     SETACL3resok   resok;
 default:
      void;
 };
@@ -915,5 +1265,8 @@ program NFSACL_PROGRAM {
 
 		GETACL3res
 		NFSACL3_GETACL(GETACL3args)           = 1;
+
+		SETACL3res
+		NFSACL3_SETACL(SETACL3args)           = 2;
 	} = 3;
 } = 100227;

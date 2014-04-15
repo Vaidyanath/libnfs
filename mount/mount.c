@@ -21,18 +21,17 @@
 
 #include <stdio.h>
 #include <errno.h>
-#include <rpc/rpc.h>
-#include <rpc/xdr.h>
+#include "libnfs-zdr.h"
 #include "libnfs.h"
 #include "libnfs-raw.h"
 #include "libnfs-private.h"
 #include "libnfs-raw-mount.h"
 
-int rpc_mount_null_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+int rpc_mount3_null_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 {
 	struct rpc_pdu *pdu;
 
-	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_NULL, cb, private_data, (xdrproc_t)xdr_void, 0);
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_NULL, cb, private_data, (zdrproc_t)zdr_void, 0);
 	if (pdu == NULL) {
 		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for mount/null call");
 		return -1;
@@ -47,18 +46,23 @@ int rpc_mount_null_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 	return 0;
 }
 
-int rpc_mount_mnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
+int rpc_mount_null_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	return rpc_mount3_null_async(rpc, cb, private_data);
+}
+
+int rpc_mount3_mnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
 {
 	struct rpc_pdu *pdu;
 
-	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_MNT, cb, private_data, (xdrproc_t)xdr_mountres3, sizeof(mountres3));
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_MNT, cb, private_data, (zdrproc_t)zdr_mountres3, sizeof(mountres3));
 	if (pdu == NULL) {
 		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for mount/mnt call");
 		return -1;
 	}
 
-	if (xdr_dirpath(&pdu->xdr, &export) == 0) {
-		rpc_set_error(rpc, "XDR error. Failed to encode mount/mnt call");
+	if (zdr_dirpath(&pdu->zdr, &export) == 0) {
+		rpc_set_error(rpc, "ZDR error. Failed to encode mount/mnt call");
 		rpc_free_pdu(rpc, pdu);
 		return -1;
 	}
@@ -72,11 +76,16 @@ int rpc_mount_mnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *
 	return 0;
 }
 
-int rpc_mount_dump_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+int rpc_mount_mnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
+{
+	return rpc_mount3_mnt_async(rpc, cb, export, private_data);
+}
+
+int rpc_mount3_dump_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 {
 	struct rpc_pdu *pdu;
 
-	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_DUMP, cb, private_data, (xdrproc_t)xdr_mountlist, sizeof(mountlist));
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_DUMP, cb, private_data, (zdrproc_t)zdr_mountlist, sizeof(mountlist));
 	if (pdu == NULL) {
 		rpc_set_error(rpc, "Failed to allocate pdu for mount/dump");
 		return -1;
@@ -91,17 +100,22 @@ int rpc_mount_dump_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 	return 0;
 }
 
-int rpc_mount_umnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
+int rpc_mount_dump_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	return rpc_mount3_dump_async(rpc, cb, private_data);
+}
+
+int rpc_mount3_umnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
 {
 	struct rpc_pdu *pdu;
 
-	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_UMNT, cb, private_data, (xdrproc_t)xdr_void, 0);
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_UMNT, cb, private_data, (zdrproc_t)zdr_void, 0);
 	if (pdu == NULL) {
 		rpc_set_error(rpc, "Failed to allocate pdu for mount/umnt");
 		return -1;
 	}
 
-	if (xdr_dirpath(&pdu->xdr, &export) == 0) {
+	if (zdr_dirpath(&pdu->zdr, &export) == 0) {
 		rpc_set_error(rpc, "failed to encode dirpath for mount/umnt");
 		rpc_free_pdu(rpc, pdu);
 		return -1;
@@ -116,11 +130,16 @@ int rpc_mount_umnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void 
 	return 0;
 }
 
-int rpc_mount_umntall_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+int rpc_mount_umnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
+{
+	return rpc_mount3_umnt_async(rpc, cb, export, private_data);
+}
+
+int rpc_mount3_umntall_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 {
 	struct rpc_pdu *pdu;
 
-	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_UMNTALL, cb, private_data, (xdrproc_t)xdr_void, 0);
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_UMNTALL, cb, private_data, (zdrproc_t)zdr_void, 0);
 	if (pdu == NULL) {
 		rpc_set_error(rpc, "Failed to allocate pdu for mount/umntall");
 		return -1;
@@ -135,11 +154,16 @@ int rpc_mount_umntall_async(struct rpc_context *rpc, rpc_cb cb, void *private_da
 	return 0;
 }
 
-int rpc_mount_export_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+int rpc_mount_umntall_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	return rpc_mount3_umntall_async(rpc, cb, private_data);
+}
+
+int rpc_mount3_export_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
 {
 	struct rpc_pdu *pdu;
 
-	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_EXPORT, cb, private_data, (xdrproc_t)xdr_exports, sizeof(exports));
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V3, MOUNT3_EXPORT, cb, private_data, (zdrproc_t)zdr_exports, sizeof(exports));
 	if (pdu == NULL) {
 		rpc_set_error(rpc, "Failed to allocate pdu for mount/export");
 		return -1;
@@ -152,6 +176,11 @@ int rpc_mount_export_async(struct rpc_context *rpc, rpc_cb cb, void *private_dat
 	}
 
 	return 0;
+}
+
+int rpc_mount_export_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	return rpc_mount3_export_async(rpc, cb, private_data);
 }
 
 char *mountstat3_to_str(int st)
@@ -194,5 +223,129 @@ int mountstat3_to_errno(int st)
 	return -ERANGE;
 }
 
+int rpc_mount1_null_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	struct rpc_pdu *pdu;
 
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V1, MOUNT1_NULL, cb, private_data, (zdrproc_t)zdr_void, 0);
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for MOUNT1/NULL call");
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Out of memory. Failed to queue pdu for MOUNT1/NULL call");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
+
+int rpc_mount1_mnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
+{
+	struct rpc_pdu *pdu;
+
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V1, MOUNT1_MNT, cb, private_data, (zdrproc_t)zdr_mountres1, sizeof(mountres1));
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Out of memory. Failed to allocate pdu for MOUNT1/MNT call");
+		return -1;
+	}
+
+	if (zdr_dirpath(&pdu->zdr, &export) == 0) {
+		rpc_set_error(rpc, "ZDR error. Failed to encode MOUNT1/MNT call");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Out of memory. Failed to queue pdu for MOUNT1/MNT call");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
+
+int rpc_mount1_dump_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	struct rpc_pdu *pdu;
+
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V1, MOUNT1_DUMP, cb, private_data, (zdrproc_t)zdr_mountlist, sizeof(mountlist));
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Failed to allocate pdu for MOUNT1/DUMP");
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Failed to queue MOUNT1/DUMP pdu");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
+
+int rpc_mount1_umnt_async(struct rpc_context *rpc, rpc_cb cb, char *export, void *private_data)
+{
+	struct rpc_pdu *pdu;
+
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V1, MOUNT1_UMNT, cb, private_data, (zdrproc_t)zdr_void, 0);
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Failed to allocate pdu for MOUNT1/UMNT");
+		return -1;
+	}
+
+	if (zdr_dirpath(&pdu->zdr, &export) == 0) {
+		rpc_set_error(rpc, "failed to encode dirpath for MOUNT1/UMNT");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Failed to queue MOUNT1/UMNT pdu");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
+
+int rpc_mount1_umntall_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	struct rpc_pdu *pdu;
+
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V1, MOUNT1_UMNTALL, cb, private_data, (zdrproc_t)zdr_void, 0);
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Failed to allocate pdu for MOUNT1/UMNTALL");
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Failed to queue MOUNT1/UMNTALL pdu");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
+
+int rpc_mount1_export_async(struct rpc_context *rpc, rpc_cb cb, void *private_data)
+{
+	struct rpc_pdu *pdu;
+
+	pdu = rpc_allocate_pdu(rpc, MOUNT_PROGRAM, MOUNT_V1, MOUNT1_EXPORT, cb, private_data, (zdrproc_t)zdr_exports, sizeof(exports));
+	if (pdu == NULL) {
+		rpc_set_error(rpc, "Failed to allocate pdu for MOUNT1/EXPORT");
+		return -1;
+	}
+
+	if (rpc_queue_pdu(rpc, pdu) != 0) {
+		rpc_set_error(rpc, "Failed to queue MOUNT1/EXPORT pdu");
+		rpc_free_pdu(rpc, pdu);
+		return -1;
+	}
+
+	return 0;
+}
 

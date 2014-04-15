@@ -18,22 +18,33 @@
 /* Example program using the lowlevel raw interface.
  * This allow accurate control of the exact commands that are being used.
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #ifdef WIN32
 #include "win32_compat.h"
-#else
-#include <poll.h>
 #endif
 #define SERVER "10.1.1.27"
 #define EXPORT "/shared"
 
+#ifdef HAVE_POLL_H
+#include <poll.h>
+#endif
+
+#ifdef HAVE_NETINET_IN_H
+#include <netinet/in.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "libnfs-zdr.h"
 #include "libnfs.h"
 #include "libnfs-raw.h"
 #include "libnfs-raw-mount.h"
 #include "libnfs-raw-nfs.h"
+#include "libnfs-raw-portmap.h"
 #include "libnfs-raw-rquota.h"
 
 struct client {
@@ -75,7 +86,7 @@ void rquota_connect_cb(struct rpc_context *rpc, int status, void *data _U_, void
 	printf("Connected to RPC.RQUOTAD on %s:%d\n", client->server, client->rquota_port);
 	printf("Send GETQUOTA request for uid 100\n");
 	if (rpc_rquota1_getquota_async(rpc, rquota_getquota_cb, EXPORT, 100, client) != 0) {
-		printf("Failed to send fsinfo request\n");
+		printf("Failed to send getquota request\n");
 		exit(10);
 	}
 }
@@ -117,11 +128,14 @@ void acl_getacl_cb(struct rpc_context *rpc _U_, int status, void *data, void *pr
 void acl_null_cb(struct rpc_context *rpc _U_, int status, void *data, void *private_data)
 {
 	struct client *client = private_data;
+	GETACL3args args;
 
 	printf("Got NFSACL/NULL reply\n");
 	printf("Get ACL for root handle\n");
 
-	if (rpc_nfsacl_getacl_async(rpc, acl_getacl_cb, &client->rootfh, NFSACL_MASK_ACL_ENTRY|NFSACL_MASK_ACL_COUNT|NFSACL_MASK_ACL_DEFAULT_ENTRY|NFSACL_MASK_ACL_DEFAULT_COUNT, client) != 0) {
+	args.dir = client->rootfh;
+	args.mask = NFSACL_MASK_ACL_ENTRY|NFSACL_MASK_ACL_COUNT|NFSACL_MASK_ACL_DEFAULT_ENTRY|NFSACL_MASK_ACL_DEFAULT_COUNT;
+	if (rpc_nfsacl_getacl_async(rpc, acl_getacl_cb, &args, client) != 0) {
 		printf("Failed to send getacl request\n");
 		exit(10);
 	}
@@ -157,6 +171,7 @@ void nfs_fsinfo_cb(struct rpc_context *rpc _U_, int status, void *data, void *pr
 void nfs_connect_cb(struct rpc_context *rpc, int status, void *data _U_, void *private_data)
 {
 	struct client *client = private_data;
+	struct FSINFO3args args;
 
 	if (status != RPC_STATUS_SUCCESS) {
 		printf("connection to RPC.MOUNTD on server %s failed\n", client->server);
@@ -165,7 +180,8 @@ void nfs_connect_cb(struct rpc_context *rpc, int status, void *data _U_, void *p
 
 	printf("Connected to RPC.NFSD on %s:%d\n", client->server, client->mount_port);
 	printf("Send FSINFO request\n");
-	if (rpc_nfs_fsinfo_async(rpc, nfs_fsinfo_cb, &client->rootfh, client) != 0) {
+	args.fsroot = client->rootfh;
+	if (rpc_nfs3_fsinfo_async(rpc, nfs_fsinfo_cb, &args, client) != 0) {
 		printf("Failed to send fsinfo request\n");
 		exit(10);
 	}
@@ -330,6 +346,38 @@ void pmap_getport1_cb(struct rpc_context *rpc, int status, void *data, void *pri
 	}
 }
 
+void pmap_dump_cb(struct rpc_context *rpc, int status, void *data, void *private_data)
+{
+	struct client *client = private_data;
+	struct pmap_dump_result *dr = data;
+	struct pmap_mapping_list *list = dr->list;
+
+	if (status == RPC_STATUS_ERROR) {
+		printf("portmapper null call failed with \"%s\"\n", (char *)data);
+		exit(10);
+	}
+	if (status != RPC_STATUS_SUCCESS) {
+		printf("portmapper null call to server %s failed, status:%d\n", client->server, status);
+		exit(10);
+	}
+
+	printf("Got reply from server for PORTMAP/DUMP procedure.\n");
+	while (list) {
+		printf("Prog:%d Vers:%d Protocol:%d Port:%d\n",
+			list->map.prog,
+			list->map.vers,
+			list->map.prot,
+			list->map.port);
+		list = list->next;
+	}
+
+	printf("Send getport request asking for MOUNT port\n");
+	if (rpc_pmap_getport_async(rpc, RQUOTA_PROGRAM, RQUOTA_V1, IPPROTO_TCP, pmap_getport1_cb, client) != 0) {
+		printf("Failed to send getport request\n");
+		exit(10);
+	}
+}
+
 void pmap_null_cb(struct rpc_context *rpc, int status, void *data, void *private_data)
 {
 	struct client *client = private_data;
@@ -344,8 +392,8 @@ void pmap_null_cb(struct rpc_context *rpc, int status, void *data, void *private
 	}
 
 	printf("Got reply from server for PORTMAP/NULL procedure.\n");
-	printf("Send getport request asking for MOUNT port\n");
-	if (rpc_pmap_getport_async(rpc, RQUOTA_PROGRAM, RQUOTA_V1, IPPROTO_TCP, pmap_getport1_cb, client) != 0) {
+	printf("Send PMAP/DUMP command\n");
+	if (rpc_pmap_dump_async(rpc, pmap_dump_cb, client) != 0) {
 		printf("Failed to send getport request\n");
 		exit(10);
 	}
