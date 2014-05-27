@@ -12,7 +12,7 @@ Package: libnfs-dev
 Multi-Arch: same
 Architecture: any
 Section: libdevel
-Depends: libnfs1 (= ${binary:Version}),
+Depends: libnfs4 (= ${binary:Version}),
          ${misc:Depends}
 Description: NFS client library (development files)
  LIBNFS is a client library for accessing NFS shares over a network.
@@ -24,7 +24,7 @@ Description: NFS client library (development files)
  .
  This package provides the necessary files needed for development.
 
-Package: libnfs1
+Package: libnfs4
 Architecture: any
 Multi-Arch: same
 Pre-Depends: ${misc:Pre-Depends}
