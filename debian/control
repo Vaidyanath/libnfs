@@ -29,6 +29,7 @@ Architecture: any
 Multi-Arch: same
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Conflicts: libnfs1
 Description: NFS client library (shared library)
  LIBNFS is a client library for accessing NFS shares over a network.
  .
