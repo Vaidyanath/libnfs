@@ -25,9 +25,8 @@ License: LGPL-2.1+
  '/usr/share/common-licenses/LGPL-2.1'.
 
 Files: win32/*
-Copyright: 2006 Dan Kennedy
-Copyright: 2006 Juliusz Chroboczek
-Copyright: 2014 Ronnie Sahlberg <ronniesahlberg@gmail.com>
+Copyright: 2006, Dan Kennedy and Juliusz Chroboczek
+Copyright: 2014, Ronnie Sahlberg <ronniesahlberg@gmail.com>
 License: MIT/X11 (BSD like)
  Redistribution and use in source and binary forms, with or without
  modification, are permitted provided that the following conditions
@@ -76,6 +75,7 @@ License: GPL-3+
 
 Files: debian/*
 Copyright: 2011, Andres Mejia <amejia@debian.org>
+Copyright: 2014, Ritesh Raj Sarraf <rrs@debian.org>
 License: LGPL-2.1+
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
