@@ -69,21 +69,41 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include "libnfs-zdr.h"
+#include "slist.h"
 #include "libnfs.h"
 #include "libnfs-raw.h"
 #include "libnfs-raw-mount.h"
 #include "libnfs-raw-nfs.h"
+#include "libnfs-raw-portmap.h"
 #include "libnfs-private.h"
 
+#define MAX_DIR_CACHE 128
+
 struct nfsdir {
+       struct nfs_fh3 fh;
+       fattr3 attr;
+       struct nfsdir *next;
+
        struct nfsdirent *entries;
        struct nfsdirent *current;
+};
+
+struct nfs_readahead {
+       uint64_t fh_offset;
+       uint64_t last_offset;
+       uint64_t buf_offset;
+       uint64_t buf_count;
+       time_t buf_ts;
+       void *buf;
+       uint32_t cur_ra;
 };
 
 struct nfsfh {
        struct nfs_fh3 fh;
        int is_sync;
+       int is_append;
        uint64_t offset;
+       struct nfs_readahead ra;
 };
 
 struct nfs_context {
@@ -94,6 +114,7 @@ struct nfs_context {
        uint64_t readmax;
        uint64_t writemax;
        char *cwd;
+       struct nfsdir *dircache;
 };
 
 void nfs_free_nfsdir(struct nfsdir *nfsdir)
@@ -106,11 +127,42 @@ void nfs_free_nfsdir(struct nfsdir *nfsdir)
 		free(nfsdir->entries);
 		nfsdir->entries = dirent;
 	}
+	free(nfsdir->fh.data.data_val);
 	free(nfsdir);
 }
 
+static void nfs_dircache_add(struct nfs_context *nfs, struct nfsdir *nfsdir)
+{
+	int i;
+	LIBNFS_LIST_ADD(&nfs->dircache, nfsdir);
+
+	for (nfsdir = nfs->dircache, i = 0; nfsdir; nfsdir = nfsdir->next, i++) {
+		if (i > MAX_DIR_CACHE) {
+			LIBNFS_LIST_REMOVE(&nfs->dircache, nfsdir);
+			nfs_free_nfsdir(nfsdir);
+			break;
+		}
+	}
+}
+
+static struct nfsdir *nfs_dircache_find(struct nfs_context *nfs, struct nfs_fh3 *fh)
+{
+	struct nfsdir *nfsdir;
+
+	for (nfsdir = nfs->dircache; nfsdir; nfsdir = nfsdir->next) {
+		if (nfsdir->fh.data.data_len == fh->data.data_len &&
+		    !memcmp(nfsdir->fh.data.data_val, fh->data.data_val, fh->data.data_len)) {
+			LIBNFS_LIST_REMOVE(&nfs->dircache, nfsdir);
+			return nfsdir;
+		}
+	}
+
+	return NULL;
+}
+
 struct nfs_cb_data;
-typedef int (*continue_func)(struct nfs_context *nfs, struct nfs_cb_data *data);
+typedef int (*continue_func)(struct nfs_context *nfs, fattr3 *attr,
+			     struct nfs_cb_data *data);
 
 struct nfs_cb_data {
        struct nfs_context *nfs;
@@ -132,9 +184,8 @@ struct nfs_cb_data {
        int cancel;
        int oom;
        int num_calls;
-       uint64_t start_offset, max_offset;
+       uint64_t offset, count, max_offset, org_offset, org_count;
        char *buffer;
-       size_t request_size;
        char *usrbuf;
 };
 
@@ -142,9 +193,10 @@ struct nfs_mcb_data {
        struct nfs_cb_data *data;
        uint64_t offset;
        uint64_t count;
+       int update_pos;
 };
 
-static int nfs_lookup_path_async_internal(struct nfs_context *nfs, struct nfs_cb_data *data, struct nfs_fh3 *fh);
+static int nfs_lookup_path_async_internal(struct nfs_context *nfs, fattr3 *attr, struct nfs_cb_data *data, struct nfs_fh3 *fh);
 
 void nfs_set_auth(struct nfs_context *nfs, struct AUTH *auth)
 {
@@ -178,12 +230,14 @@ char *nfs_get_error(struct nfs_context *nfs)
 
 static int nfs_set_context_args(struct nfs_context *nfs, char *arg, char *val)
 {
-	if (!strncmp(arg, "tcp-syncnt", 10)) {
+	if (!strcmp(arg, "tcp-syncnt")) {
 		rpc_set_tcp_syncnt(nfs_get_rpc_context(nfs), atoi(val));
-	} else if (!strncmp(arg, "uid", 3)) {
+	} else if (!strcmp(arg, "uid")) {
 		rpc_set_uid(nfs_get_rpc_context(nfs), atoi(val));
-	} else if (!strncmp(arg, "gid", 3)) {
+	} else if (!strcmp(arg, "gid")) {
 		rpc_set_gid(nfs_get_rpc_context(nfs), atoi(val));
+	} else if (!strcmp(arg, "readahaed")) {
+		rpc_set_readahead(nfs_get_rpc_context(nfs), atoi(val));
 	}
 	return 0;
 }
@@ -375,6 +429,12 @@ void nfs_destroy_context(struct nfs_context *nfs)
 		nfs->rootfh.data.data_val = NULL;
 	}
 
+	while (nfs->dircache) {
+		struct nfsdir *nfsdir = nfs->dircache;
+		LIBNFS_LIST_REMOVE(&nfs->dircache, nfsdir);
+		nfs_free_nfsdir(nfsdir);
+	}
+
 	free(nfs);
 }
 
@@ -394,7 +454,7 @@ void free_rpc_cb_data(struct rpc_cb_data *data)
 	free(data);
 }
 
-static void rpc_connect_program_4_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
+static void rpc_connect_program_5_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
 {
 	struct rpc_cb_data *data = private_data;
 
@@ -418,10 +478,55 @@ static void rpc_connect_program_4_cb(struct rpc_context *rpc, int status, void *
 	free_rpc_cb_data(data);
 }
 
+static void rpc_connect_program_4_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
+{
+	struct rpc_cb_data *data = private_data;
+
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
+	/* Dont want any more callbacks even if the socket is closed */
+	rpc->connect_cb = NULL;
+
+	if (status == RPC_STATUS_ERROR) {
+		data->cb(rpc, status, command_data, data->private_data);
+		free_rpc_cb_data(data);
+		return;
+	}
+	if (status == RPC_STATUS_CANCEL) {
+		data->cb(rpc, status, "Command was cancelled", data->private_data);
+		free_rpc_cb_data(data);
+		return;
+	}
+
+	switch (data->program) {
+	case MOUNT_PROGRAM:
+		if (rpc_mount3_null_async(rpc, rpc_connect_program_5_cb,
+					data) != 0) {
+			data->cb(rpc, status, command_data, data->private_data);
+			free_rpc_cb_data(data);
+			return;
+		}
+		return;
+	case NFS_PROGRAM:
+		if (rpc_nfs3_null_async(rpc, rpc_connect_program_5_cb,
+					data) != 0) {
+			data->cb(rpc, status, command_data, data->private_data);
+			free_rpc_cb_data(data);
+			return;
+		}
+		return;
+	}
+
+	data->cb(rpc, status, NULL, data->private_data);
+	free_rpc_cb_data(data);
+}
+
 static void rpc_connect_program_3_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
 {
 	struct rpc_cb_data *data = private_data;
-	uint32_t rpc_port;
+	struct pmap3_string_result *gar;
+	uint32_t rpc_port = 0;
+	unsigned char *ptr;
 
 	assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
@@ -436,7 +541,29 @@ static void rpc_connect_program_3_cb(struct rpc_context *rpc, int status, void *
 		return;
 	}
 
-	rpc_port = *(uint32_t *)command_data;
+	switch (rpc->s.ss_family) {
+	case AF_INET:
+		rpc_port = *(uint32_t *)command_data;
+		break;
+	case AF_INET6:
+		/* ouch. portmapper and ipv6 are not great */
+		gar = command_data;
+		if (gar->addr == NULL) {
+			break;
+		}
+		ptr = strrchr(gar->addr, '.');
+		if (ptr == NULL) {
+			break;
+		}
+		rpc_port = atoi(ptr + 1);
+		*ptr = 0;
+		ptr = strrchr(gar->addr, '.');
+		if (ptr == NULL) {
+			break;
+		}
+		rpc_port += 256 * atoi(ptr + 1);
+		break;
+	}
 	if (rpc_port == 0) {
 		rpc_set_error(rpc, "RPC error. Program is not available on %s", data->server);
 		data->cb(rpc, RPC_STATUS_ERROR, rpc_get_error(rpc), data->private_data);
@@ -455,6 +582,7 @@ static void rpc_connect_program_3_cb(struct rpc_context *rpc, int status, void *
 static void rpc_connect_program_2_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
 {
 	struct rpc_cb_data *data = private_data;
+	struct pmap3_mapping map;
 
 	assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
@@ -469,10 +597,26 @@ static void rpc_connect_program_2_cb(struct rpc_context *rpc, int status, void *
 		return;
 	}
 
-	if (rpc_pmap_getport_async(rpc, data->program, data->version, IPPROTO_TCP, rpc_connect_program_3_cb, private_data) != 0) {
-		data->cb(rpc, status, command_data, data->private_data);
-		free_rpc_cb_data(data);
-		return;
+	switch (rpc->s.ss_family) {
+	case AF_INET:
+		if (rpc_pmap2_getport_async(rpc, data->program, data->version, IPPROTO_TCP, rpc_connect_program_3_cb, private_data) != 0) {
+			data->cb(rpc, status, command_data, data->private_data);
+			free_rpc_cb_data(data);
+			return;
+		}
+		break;
+	case AF_INET6:
+		map.prog=data->program;
+		map.vers=data->version;
+		map.netid="";
+		map.addr="";
+		map.owner="";
+		if (rpc_pmap3_getaddr_async(rpc, &map, rpc_connect_program_3_cb, private_data) != 0) {
+			data->cb(rpc, status, command_data, data->private_data);
+			free_rpc_cb_data(data);
+			return;
+		}
+		break;
 	}
 }
 
@@ -496,14 +640,25 @@ static void rpc_connect_program_1_cb(struct rpc_context *rpc, int status, void *
 		return;
 	}
 
-	if (rpc_pmap_null_async(rpc, rpc_connect_program_2_cb, data) != 0) {
-		data->cb(rpc, status, command_data, data->private_data);
-		free_rpc_cb_data(data);
-		return;
+	switch (rpc->s.ss_family) {
+	case AF_INET:
+		if (rpc_pmap2_null_async(rpc, rpc_connect_program_2_cb, data) != 0) {
+			data->cb(rpc, status, command_data, data->private_data);
+			free_rpc_cb_data(data);
+			return;
+		}
+		break;
+	case AF_INET6:
+		if (rpc_pmap3_null_async(rpc, rpc_connect_program_2_cb, data) != 0) {
+			data->cb(rpc, status, command_data, data->private_data);
+			free_rpc_cb_data(data);
+			return;
+		}
+		break;
 	}
 }
 
-int rpc_connect_program_async(struct rpc_context *rpc, char *server, int program, int version, rpc_cb cb, void *private_data)
+int rpc_connect_program_async(struct rpc_context *rpc, const char *server, int program, int version, rpc_cb cb, void *private_data)
 {
 	struct rpc_cb_data *data;
 
@@ -540,9 +695,6 @@ static void free_nfs_cb_data(struct nfs_cb_data *data)
 
 	free(data);
 }
-
-
-
 
 
 static void nfs_mount_10_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
@@ -627,36 +779,6 @@ static void nfs_mount_8_cb(struct rpc_context *rpc, int status, void *command_da
 	}
 }
 
-
-static void nfs_mount_7_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct nfs_cb_data *data = private_data;
-	struct nfs_context *nfs = data->nfs;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	/* Dont want any more callbacks even if the socket is closed */
-	rpc->connect_cb = NULL;
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(-EFAULT, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(-EINTR, nfs, "Command was cancelled", data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-
-	if (rpc_nfs3_null_async(rpc, nfs_mount_8_cb, data) != 0) {
-		data->cb(-ENOMEM, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-}
-
-
 static void nfs_mount_6_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
 {
 	struct nfs_cb_data *data = private_data;
@@ -695,11 +817,13 @@ static void nfs_mount_6_cb(struct rpc_context *rpc, int status, void *command_da
 	memcpy(nfs->rootfh.data.data_val, res->mountres3_u.mountinfo.fhandle.fhandle3_val, nfs->rootfh.data.data_len);
 
 	rpc_disconnect(rpc, "normal disconnect");
-	if (rpc_connect_async(rpc, nfs->server, 2049, nfs_mount_7_cb, data) != 0) {
+
+	if (rpc_connect_program_async(nfs->rpc, nfs->server, NFS_PROGRAM, NFS_V3, nfs_mount_8_cb, data) != 0) {
 		data->cb(-ENOMEM, nfs, command_data, data->private_data);
 		free_nfs_cb_data(data);
 		return;
 	}
+
 	/* NFS TCP connections we want to autoreconnect after sessions are torn down (due to inactivity or error) */
 	rpc_set_autoreconnect(rpc);
 }
@@ -724,123 +848,6 @@ static void nfs_mount_5_cb(struct rpc_context *rpc, int status, void *command_da
 	}
 
 	if (rpc_mount3_mnt_async(rpc, nfs_mount_6_cb, nfs->export, data) != 0) {
-		data->cb(-ENOMEM, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-}
-
-static void nfs_mount_4_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct nfs_cb_data *data = private_data;
-	struct nfs_context *nfs = data->nfs;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	/* Dont want any more callbacks even if the socket is closed */
-	rpc->connect_cb = NULL;
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(-EFAULT, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(-EINTR, nfs, "Command was cancelled", data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-
-	if (rpc_mount3_null_async(rpc, nfs_mount_5_cb, data) != 0) {
-		data->cb(-ENOMEM, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-}
-
-static void nfs_mount_3_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct nfs_cb_data *data = private_data;
-	struct nfs_context *nfs = data->nfs;
-	uint32_t mount_port;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(-EFAULT, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(-EINTR, nfs, "Command was cancelled", data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-
-	mount_port = *(uint32_t *)command_data;
-	if (mount_port == 0) {
-		rpc_set_error(rpc, "RPC error. Mount program is not available on %s", nfs->server);
-		data->cb(-ENOENT, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-
-	rpc_disconnect(rpc, "normal disconnect");
-	if (rpc_connect_async(rpc, nfs->server, mount_port, nfs_mount_4_cb, data) != 0) {
-		data->cb(-ENOMEM, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-}
-
-
-static void nfs_mount_2_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct nfs_cb_data *data = private_data;
-	struct nfs_context *nfs = data->nfs;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(-EFAULT, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(-EINTR, nfs, "Command was cancelled", data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-
-	if (rpc_pmap_getport_async(rpc, MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, nfs_mount_3_cb, private_data) != 0) {
-		data->cb(-ENOMEM, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-}
-
-static void nfs_mount_1_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct nfs_cb_data *data = private_data;
-	struct nfs_context *nfs = data->nfs;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	/* Dont want any more callbacks even if the socket is closed */
-	rpc->connect_cb = NULL;
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(-EFAULT, nfs, command_data, data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(-EINTR, nfs, "Command was cancelled", data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
-
-	if (rpc_pmap_null_async(rpc, nfs_mount_2_cb, data) != 0) {
 		data->cb(-ENOMEM, nfs, command_data, data->private_data);
 		free_nfs_cb_data(data);
 		return;
@@ -875,7 +882,7 @@ int nfs_mount_async(struct nfs_context *nfs, const char *server, const char *exp
 	data->cb           = cb;
 	data->private_data = private_data;
 
-	if (rpc_connect_async(nfs->rpc, server, 111, nfs_mount_1_cb, data) != 0) {
+	if (rpc_connect_program_async(nfs->rpc, server, MOUNT_PROGRAM, MOUNT_V3, nfs_mount_5_cb, data) != 0) {
 		rpc_set_error(nfs->rpc, "Failed to start connection");
 		free_nfs_cb_data(data);
 		return -1;
@@ -895,6 +902,7 @@ static void nfs_lookup_path_1_cb(struct rpc_context *rpc, int status, void *comm
 	struct nfs_cb_data *data = private_data;
 	struct nfs_context *nfs = data->nfs;
 	LOOKUP3res *res;
+	fattr3 *attr;
 
 	assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
@@ -917,15 +925,17 @@ static void nfs_lookup_path_1_cb(struct rpc_context *rpc, int status, void *comm
 		return;
 	}
 
-	if (nfs_lookup_path_async_internal(nfs, data, &res->LOOKUP3res_u.resok.object) != 0) {
-		rpc_set_error(nfs->rpc, "Failed to create lookup pdu");
-		data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
-		free_nfs_cb_data(data);
-		return;
-	}
+	attr = res->LOOKUP3res_u.resok.obj_attributes.attributes_follow ?
+	  &res->LOOKUP3res_u.resok.obj_attributes.post_op_attr_u.attributes :
+	  NULL;
+
+	/* This function will always invoke the callback and cleanup
+	 * for failures. So no need to check the return value.
+	 */
+	nfs_lookup_path_async_internal(nfs, attr, data, &res->LOOKUP3res_u.resok.object);
 }
 
-static int nfs_lookup_path_async_internal(struct nfs_context *nfs, struct nfs_cb_data *data, struct nfs_fh3 *fh)
+static int nfs_lookup_path_async_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data, struct nfs_fh3 *fh)
 {
 	char *path, *slash;
 	LOOKUP3args args;
@@ -964,10 +974,9 @@ static int nfs_lookup_path_async_internal(struct nfs_context *nfs, struct nfs_cb
 		if (slash != NULL) {
 			*slash = '/';
 		}
-		data->continue_cb(nfs, data);
+		data->continue_cb(nfs, attr, data);
 		return 0;
 	}
-
 
 	memset(&args, 0, sizeof(LOOKUP3args));
 	args.what.dir = *fh;
@@ -1043,7 +1052,7 @@ static int nfs_normalize_path(struct nfs_context *nfs, char *path)
 
 	/* /$ -> \0 */
 	len = strlen(path);
-	if (len >= 1) {
+	if (len > 1) {
 		if (path[len - 1] == '/') {
 			path[len - 1] = '\0';
 			len--;
@@ -1085,9 +1094,45 @@ static int nfs_normalize_path(struct nfs_context *nfs, char *path)
 	return 0;
 }
 
+static void nfs_lookup_path_getattr_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
+{
+	struct nfs_cb_data *data = private_data;
+	struct nfs_context *nfs = data->nfs;
+	GETATTR3res *res;
+	fattr3 *attr;
+
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
+	if (status == RPC_STATUS_ERROR) {
+		data->cb(-EFAULT, nfs, command_data, data->private_data);
+		free_nfs_cb_data(data);
+		return;
+	}
+	if (status == RPC_STATUS_CANCEL) {
+		data->cb(-EINTR, nfs, "Command was cancelled", data->private_data);
+		free_nfs_cb_data(data);
+		return;
+	}
+
+	res = command_data;
+	if (res->status != NFS3_OK) {
+		rpc_set_error(nfs->rpc, "NFS: GETATTR of %s failed with %s(%d)", data->saved_path, nfsstat3_to_str(res->status), nfsstat3_to_errno(res->status));
+		data->cb(nfsstat3_to_errno(res->status), nfs, rpc_get_error(nfs->rpc), data->private_data);
+		free_nfs_cb_data(data);
+		return;
+	}
+
+	attr = &res->GETATTR3res_u.resok.obj_attributes;
+	/* This function will always invoke the callback and cleanup
+	 * for failures. So no need to check the return value.
+	 */
+	nfs_lookup_path_async_internal(nfs, attr, data, &nfs->rootfh);
+}
+
 static int nfs_lookuppath_async(struct nfs_context *nfs, const char *path, nfs_cb cb, void *private_data, continue_func continue_cb, void *continue_data, void (*free_continue_data)(void *), int continue_int)
 {
 	struct nfs_cb_data *data;
+	struct GETATTR3args args;
 
 	if (path[0] == '\0') {
 		path = ".";
@@ -1133,16 +1178,25 @@ static int nfs_lookuppath_async(struct nfs_context *nfs, const char *path, nfs_c
 	}
 
 	data->path = data->saved_path;
-
-	if (nfs_lookup_path_async_internal(nfs, data, &nfs->rootfh) != 0) {
-		/* return 0 here since the callback will be invoked if there is a failure */
+	if (data->path[0]) {
+		/* This function will always invoke the callback and cleanup
+		 * for failures. So no need to check the return value.
+		 */
+		nfs_lookup_path_async_internal(nfs, NULL, data, &nfs->rootfh);
 		return 0;
+	}
+
+	/* We have a request for "", so just perform a GETATTR3 so we can
+	 * return the attributes to the caller.
+	 */
+	memset(&args, 0, sizeof(GETATTR3args));
+	args.object = nfs->rootfh;
+	if (rpc_nfs3_getattr_async(nfs->rpc, nfs_lookup_path_getattr_cb, &args, data) != 0) {
+		free_nfs_cb_data(data);
+		return -1;
 	}
 	return 0;
 }
-
-
-
 
 
 /*
@@ -1195,8 +1249,8 @@ static void nfs_stat_1_cb(struct rpc_context *rpc, int status, void *command_dat
         st.st_rdev    = 0;
         st.st_size    = res->GETATTR3res_u.resok.obj_attributes.size;
 #ifndef WIN32
-        st.st_blksize = 4096;
-        st.st_blocks  = res->GETATTR3res_u.resok.obj_attributes.size / 4096;
+        st.st_blksize = NFS_BLKSIZE;
+        st.st_blocks  = res->GETATTR3res_u.resok.obj_attributes.size / NFS_BLKSIZE;
 #endif//WIN32
         st.st_atime   = res->GETATTR3res_u.resok.obj_attributes.atime.seconds;
         st.st_mtime   = res->GETATTR3res_u.resok.obj_attributes.mtime.seconds;
@@ -1206,7 +1260,7 @@ static void nfs_stat_1_cb(struct rpc_context *rpc, int status, void *command_dat
 	free_nfs_cb_data(data);
 }
 
-static int nfs_stat_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_stat_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct GETATTR3args args;
 
@@ -1286,7 +1340,7 @@ static void nfs_stat64_1_cb(struct rpc_context *rpc, int status, void *command_d
 	free_nfs_cb_data(data);
 }
 
-static int nfs_stat64_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_stat64_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct GETATTR3args args;
 
@@ -1354,6 +1408,9 @@ static void nfs_open_trunc_cb(struct rpc_context *rpc, int status, void *command
 
 	if (data->continue_int & O_SYNC) {
 		nfsfh->is_sync = 1;
+	}
+	if (data->continue_int & O_APPEND) {
+		nfsfh->is_append = 1;
 	}
 
 	/* steal the filehandle */
@@ -1451,6 +1508,9 @@ static void nfs_open_cb(struct rpc_context *rpc, int status, void *command_data,
 	if (data->continue_int & O_SYNC) {
 		nfsfh->is_sync = 1;
 	}
+	if (data->continue_int & O_APPEND) {
+		nfsfh->is_append = 1;
+	}
 
 	/* steal the filehandle */
 	nfsfh->fh = data->fh;
@@ -1460,7 +1520,7 @@ static void nfs_open_cb(struct rpc_context *rpc, int status, void *command_data,
 	free_nfs_cb_data(data);
 }
 
-static int nfs_open_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_open_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	int nfsmode = 0;
 	ACCESS3args args;
@@ -1504,7 +1564,7 @@ int nfs_open_async(struct nfs_context *nfs, const char *path, int flags, nfs_cb 
 /*
  * Async chdir()
  */
-static int nfs_chdir_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_chdir_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	/* steal saved_path */
 	free(nfs->cwd);
@@ -1564,25 +1624,30 @@ static void nfs_pread_mcb(struct rpc_context *rpc, int status, void *command_dat
 		if (res->status != NFS3_OK) {
 			rpc_set_error(nfs->rpc, "NFS: Read failed with %s(%d)", nfsstat3_to_str(res->status), nfsstat3_to_errno(res->status));
 			data->error = 1;
-		} else  {
+		} else {
+			uint64_t count = res->READ3res_u.resok.count;
+
+			if (mdata->update_pos)
+				data->nfsfh->offset += count;
+
 			/* if we have more than one call or we have received a short read we need a reassembly buffer */
-			if (data->num_calls || (res->READ3res_u.resok.count < mdata->count && !res->READ3res_u.resok.eof)) {
+			if (data->num_calls || (count < mdata->count && !res->READ3res_u.resok.eof)) {
 				if (data->buffer == NULL) {
-					data->buffer = 	malloc(data->request_size);
+					data->buffer = 	malloc(data->count);
 					if (data->buffer == NULL) {
-						rpc_set_error(nfs->rpc, "Out-Of-Memory: Failed to allocate reassembly buffer for %d bytes", (int)data->request_size);
+						rpc_set_error(nfs->rpc, "Out-Of-Memory: Failed to allocate reassembly buffer for %d bytes", (int)data->count);
 						data->oom = 1;
 					}
 				}
 			}
-			if (res->READ3res_u.resok.count > 0) {
-				if (res->READ3res_u.resok.count <= mdata->count) {
+			if (count > 0) {
+				if (count <= mdata->count) {
 					/* copy data into reassembly buffer if we have one */
 					if (data->buffer != NULL) {
-						memcpy(&data->buffer[mdata->offset - data->start_offset], res->READ3res_u.resok.data.data_val, res->READ3res_u.resok.count);
+						memcpy(&data->buffer[mdata->offset - data->offset], res->READ3res_u.resok.data.data_val, count);
 					}
-					if (data->max_offset < mdata->offset + res->READ3res_u.resok.count) {
-						data->max_offset = mdata->offset + res->READ3res_u.resok.count;
+					if (data->max_offset < mdata->offset + count) {
+						data->max_offset = mdata->offset + count;
 					}
 				} else {
 					rpc_set_error(nfs->rpc, "NFS: Read overflow. Server has sent more data than requested!");
@@ -1590,15 +1655,15 @@ static void nfs_pread_mcb(struct rpc_context *rpc, int status, void *command_dat
 				}
 			}
 			/* check if we have received a short read */
-			if (res->READ3res_u.resok.count < mdata->count && !res->READ3res_u.resok.eof) {
-				if (res->READ3res_u.resok.count == 0) {
+			if (count < mdata->count && !res->READ3res_u.resok.eof) {
+				if (count == 0) {
 					rpc_set_error(nfs->rpc, "NFS: Read failed. No bytes read and not at EOF!");
 					data->error = 1;
 				} else {
 					/* reissue reminder of this read request */
 					READ3args args;
-					mdata->offset += res->READ3res_u.resok.count;
-					mdata->count -= res->READ3res_u.resok.count;
+					mdata->offset += count;
+					mdata->count -= count;
 					nfs_fill_READ3args(&args, data->nfsfh, mdata->offset, mdata->count);
 					if (rpc_nfs3_read_async(nfs->rpc, nfs_pread_mcb, &args, mdata) == 0) {
 						data->num_calls++;
@@ -1634,17 +1699,37 @@ static void nfs_pread_mcb(struct rpc_context *rpc, int status, void *command_dat
 		return;
 	}
 
-	data->nfsfh->offset = data->max_offset;
 	if (data->buffer) {
-		data->cb(data->max_offset - data->start_offset, nfs, data->buffer, data->private_data);
+		if (data->max_offset > data->org_offset + data->org_count) {
+			data->max_offset = data->org_offset + data->org_count;
+		}
+		data->cb(data->max_offset - data->org_offset, nfs, data->buffer + (data->org_offset - data->offset), data->private_data);
 	} else {
 		data->cb(res->READ3res_u.resok.count, nfs, res->READ3res_u.resok.data.data_val, data->private_data);
 	}
 
+	data->nfsfh->ra.fh_offset = data->max_offset;
+	if (data->nfsfh->ra.cur_ra) {
+		free(data->nfsfh->ra.buf);
+		data->nfsfh->ra.buf = data->buffer;
+		data->nfsfh->ra.buf_offset = data->offset;
+		data->nfsfh->ra.buf_count = data->count;
+		data->nfsfh->ra.buf_ts = time(NULL);
+		data->buffer = NULL;
+	}
 	free_nfs_cb_data(data);
 }
 
-int nfs_pread_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uint64_t count, nfs_cb cb, void *private_data)
+static void nfs_ra_invalidate(struct nfsfh *nfsfh) {
+	free(nfsfh->ra.buf);
+	nfsfh->ra.buf = NULL;
+	nfsfh->ra.buf_offset = 0;
+	nfsfh->ra.buf_count = 0;
+	nfsfh->ra.buf_ts = time(NULL);
+	nfsfh->ra.cur_ra = NFS_BLKSIZE;
+}
+
+static int nfs_pread_async_internal(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uint64_t count, nfs_cb cb, void *private_data, int update_pos)
 {
 	struct nfs_cb_data *data;
 
@@ -1658,18 +1743,78 @@ int nfs_pread_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offse
 	data->cb           = cb;
 	data->private_data = private_data;
 	data->nfsfh        = nfsfh;
-	data->request_size = count;
-
-	nfsfh->offset = offset;
+	data->org_offset   = offset;
+	data->org_count    = count;
 
 	assert(data->num_calls == 0);
+
+	if (nfs->rpc->readahead && time(NULL) - nfsfh->ra.buf_ts > NFS_RA_TIMEOUT) {
+		/* readahead cache timeout */
+		nfs_ra_invalidate(nfsfh);
+	}
+
+	if (nfs->rpc->readahead) {
+		if (offset >= nfsfh->ra.last_offset &&
+			offset - NFS_BLKSIZE <= nfsfh->ra.fh_offset + nfsfh->ra.cur_ra) {
+			if (nfs->rpc->readahead > nfsfh->ra.cur_ra) {
+				nfsfh->ra.cur_ra <<= 1;
+			}
+		} else {
+			nfsfh->ra.cur_ra = NFS_BLKSIZE;
+		}
+
+		nfsfh->ra.last_offset = offset;
+
+		if (nfsfh->ra.buf_offset <= offset &&
+			nfsfh->ra.buf_offset + nfsfh->ra.buf_count >= offset + count) {
+			/* serve request completely from cache */
+			data->buffer = malloc(count);
+			if (data->buffer == NULL) {
+				free_nfs_cb_data(data);
+				return -ENOMEM;
+			}
+			memcpy(data->buffer, nfsfh->ra.buf + (offset - nfsfh->ra.buf_offset), count);
+			data->cb(count, nfs, data->buffer, data->private_data);
+			nfsfh->ra.fh_offset = offset + count;
+			free_nfs_cb_data(data);
+			return 0;
+		}
+
+		/* align start offset to blocksize */
+		count += offset & (NFS_BLKSIZE - 1);
+		offset &= ~(NFS_BLKSIZE - 1);
+
+		/* align end offset to blocksize and add readahead */
+		count += nfsfh->ra.cur_ra - 1;
+		count &= ~(NFS_BLKSIZE - 1);
+
+		data->buffer = malloc(count);
+		if (data->buffer == NULL) {
+			free_nfs_cb_data(data);
+			return -ENOMEM;
+		}
+		data->offset = offset;
+		data->count = count;
+
+		if (nfsfh->ra.buf_count && nfsfh->ra.buf_offset <= offset &&
+			nfsfh->ra.buf_offset + nfsfh->ra.buf_count >= offset) {
+			/* serve request partially from cache */
+			size_t overlap = (nfsfh->ra.buf_offset + nfsfh->ra.buf_count) - offset;
+			if (overlap > count) count = overlap;
+			memcpy(data->buffer, nfsfh->ra.buf + (offset - nfsfh->ra.buf_offset), overlap);
+			offset += overlap;
+			count -= overlap;
+		}
+	} else {
+		data->offset = offset;
+		data->count = count;
+	}
+
+	data->max_offset = offset;
 
 	/* chop requests into chunks of at most READMAX bytes if necessary.
 	 * we send all reads in parallel so that performance is still good.
 	 */
-	data->max_offset = offset;
-	data->start_offset = offset;
-
 	do {
 		uint64_t readcount = count;
 		struct nfs_mcb_data *mdata;
@@ -1693,6 +1838,7 @@ int nfs_pread_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offse
 		mdata->data   = data;
 		mdata->offset = offset;
 		mdata->count  = readcount;
+		mdata->update_pos = update_pos;
 
 		nfs_fill_READ3args(&args, nfsfh, offset, readcount);
 
@@ -1715,12 +1861,17 @@ int nfs_pread_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offse
 	 return 0;
 }
 
+int nfs_pread_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uint64_t count, nfs_cb cb, void *private_data)
+{
+	return nfs_pread_async_internal(nfs, nfsfh, offset, count, cb, private_data, 0);
+}
+
 /*
  * Async read()
  */
 int nfs_read_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t count, nfs_cb cb, void *private_data)
 {
-	return nfs_pread_async(nfs, nfsfh, nfsfh->offset, count, cb, private_data);
+	return nfs_pread_async_internal(nfs, nfsfh, nfsfh->offset, count, cb, private_data, 1);
 }
 
 
@@ -1735,7 +1886,7 @@ static void nfs_fill_WRITE3args (WRITE3args *args, struct nfsfh *fh, uint64_t of
 	args->file = fh->fh;
 	args->offset = offset;
 	args->count  = count;
-	args->stable = fh->is_sync?FILE_SYNC:UNSTABLE;
+	args->stable = fh->is_sync ? FILE_SYNC : UNSTABLE;
 	args->data.data_len = count;
 	args->data.data_val = buf;
 }
@@ -1766,17 +1917,23 @@ static void nfs_pwrite_mcb(struct rpc_context *rpc, int status, void *command_da
 			rpc_set_error(nfs->rpc, "NFS: Write failed with %s(%d)", nfsstat3_to_str(res->status), nfsstat3_to_errno(res->status));
 			data->error = 1;
 		} else  {
-			if (res->WRITE3res_u.resok.count < mdata->count) {
-				if (res->WRITE3res_u.resok.count == 0) {
+			uint64_t count = res->WRITE3res_u.resok.count;
+
+			if (mdata->update_pos)
+				data->nfsfh->offset += count;
+
+			if (count < mdata->count) {
+				if (count == 0) {
 					rpc_set_error(nfs->rpc, "NFS: Write failed. No bytes written!");
 					data->error = 1;
 				} else {
 					/* reissue reminder of this write request */
 					WRITE3args args;
-					mdata->offset += res->WRITE3res_u.resok.count;
-					mdata->count -= res->WRITE3res_u.resok.count;
+					mdata->offset += count;
+					mdata->count -= count;
+
 					nfs_fill_WRITE3args(&args, data->nfsfh, mdata->offset, mdata->count,
-										&data->usrbuf[mdata->offset - data->start_offset]);
+										&data->usrbuf[mdata->offset - data->offset]);
 					if (rpc_nfs3_write_async(nfs->rpc, nfs_pwrite_mcb, &args, mdata) == 0) {
 						data->num_calls++;
 						return;
@@ -1786,9 +1943,9 @@ static void nfs_pwrite_mcb(struct rpc_context *rpc, int status, void *command_da
 					}
 				}
 			}
-			if (res->WRITE3res_u.resok.count > 0) {
-				if (data->max_offset < mdata->offset + res->WRITE3res_u.resok.count) {
-					data->max_offset = mdata->offset + res->WRITE3res_u.resok.count;
+			if (count > 0) {
+				if (data->max_offset < mdata->offset + count) {
+					data->max_offset = mdata->offset + count;
 				}
 			}
 		}
@@ -1816,14 +1973,13 @@ static void nfs_pwrite_mcb(struct rpc_context *rpc, int status, void *command_da
 		return;
 	}
 
-	data->nfsfh->offset = data->max_offset;
-	data->cb(data->max_offset - data->start_offset, nfs, NULL, data->private_data);
+	data->cb(data->max_offset - data->offset, nfs, NULL, data->private_data);
 
 	free_nfs_cb_data(data);
 }
 
 
-int nfs_pwrite_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uint64_t count, char *buf, nfs_cb cb, void *private_data)
+static int nfs_pwrite_async_internal(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uint64_t count, char *buf, nfs_cb cb, void *private_data, int update_pos)
 {
 	struct nfs_cb_data *data;
 
@@ -1839,8 +1995,6 @@ int nfs_pwrite_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offs
 	data->nfsfh        = nfsfh;
 	data->usrbuf       = buf;
 
-	nfsfh->offset = offset;
-
 	/* hello, clang-analyzer */
 	assert(data->num_calls == 0);
 
@@ -1848,7 +2002,7 @@ int nfs_pwrite_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offs
 	 * we send all writes in parallel so that performance is still good.
 	 */
 	data->max_offset = offset;
-	data->start_offset = offset;
+	data->offset = offset;
 
 	do {
 		uint64_t writecount = count;
@@ -1873,8 +2027,9 @@ int nfs_pwrite_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offs
 		mdata->data   = data;
 		mdata->offset = offset;
 		mdata->count  = writecount;
+		mdata->update_pos = update_pos;
 
-		nfs_fill_WRITE3args(&args, nfsfh, offset, writecount, &buf[offset - data->start_offset]);
+		nfs_fill_WRITE3args(&args, nfsfh, offset, writecount, &buf[offset - data->offset]);
 
 		if (rpc_nfs3_write_async(nfs->rpc, nfs_pwrite_mcb, &args, mdata) != 0) {
 			rpc_set_error(nfs->rpc, "RPC error: Failed to send WRITE call for %s", data->path);
@@ -1895,12 +2050,80 @@ int nfs_pwrite_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offs
 	return 0;
 }
 
+int nfs_pwrite_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uint64_t count, char *buf, nfs_cb cb, void *private_data)
+{
+	return nfs_pwrite_async_internal(nfs, nfsfh, offset, count, buf, cb, private_data, 0);
+}
+
 /*
  * Async write()
  */
+static void nfs_write_append_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
+{
+	struct nfs_cb_data *data = private_data;
+	struct nfs_context *nfs = data->nfs;
+	GETATTR3res *res;
+
+	assert(rpc->magic == RPC_CONTEXT_MAGIC);
+
+	if (status == RPC_STATUS_ERROR) {
+		data->cb(-EFAULT, nfs, command_data, data->private_data);
+		free_nfs_cb_data(data);
+		return;
+	}
+	if (status == RPC_STATUS_CANCEL) {
+		data->cb(-EINTR, nfs, "Command was cancelled", data->private_data);
+		free_nfs_cb_data(data);
+		return;
+	}
+
+	res = command_data;
+	if (res->status != NFS3_OK) {
+		rpc_set_error(nfs->rpc, "NFS: GETATTR failed with %s(%d)", nfsstat3_to_str(res->status), nfsstat3_to_errno(res->status));
+		data->cb(nfsstat3_to_errno(res->status), nfs, rpc_get_error(nfs->rpc), data->private_data);
+		free_nfs_cb_data(data);
+		return;
+	}
+
+	if (nfs_pwrite_async_internal(nfs, data->nfsfh, res->GETATTR3res_u.resok.obj_attributes.size, data->count, data->usrbuf, data->cb, data->private_data, 1) != 0) {
+		data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
+		free_nfs_cb_data(data);
+		return;
+	}
+	free_nfs_cb_data(data);
+}
+
 int nfs_write_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t count, char *buf, nfs_cb cb, void *private_data)
 {
-	return nfs_pwrite_async(nfs, nfsfh, nfsfh->offset, count, buf, cb, private_data);
+	nfs_ra_invalidate(nfsfh);
+	if (nfsfh->is_append) {
+		struct GETATTR3args args;
+		struct nfs_cb_data *data;
+
+		data = malloc(sizeof(struct nfs_cb_data));
+		if (data == NULL) {
+			rpc_set_error(nfs->rpc, "out of memory: failed to allocate nfs_cb_data structure");
+			return -1;
+		}
+		memset(data, 0, sizeof(struct nfs_cb_data));
+		data->nfs           = nfs;
+		data->cb            = cb;
+		data->private_data  = private_data;
+		data->nfsfh         = nfsfh;
+		data->usrbuf	    = buf;
+		data->count         = count;
+
+		memset(&args, 0, sizeof(GETATTR3args));
+		args.object = nfsfh->fh;
+
+		if (rpc_nfs3_getattr_async(nfs->rpc, nfs_write_append_cb, &args, data) != 0) {
+			rpc_set_error(nfs->rpc, "out of memory: failed to send GETATTR");
+			free_nfs_cb_data(data);
+			return -1;
+		}
+		return 0;
+	}
+	return nfs_pwrite_async_internal(nfs, nfsfh, nfsfh->offset, count, buf, cb, private_data, 1);
 }
 
 
@@ -1916,6 +2139,7 @@ int nfs_close_async(struct nfs_context *nfs, struct nfsfh *nfsfh, nfs_cb cb, voi
 		free(nfsfh->fh.data.data_val);
 		nfsfh->fh.data.data_val = NULL;
 	}
+	free(nfsfh->ra.buf);
 	free(nfsfh);
 
 	cb(0, nfs, NULL, private_data);
@@ -2089,7 +2313,7 @@ int nfs_ftruncate_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t l
 /*
  * Async truncate()
  */
-static int nfs_truncate_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_truncate_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	uint64_t offset = data->continue_int;
 	struct nfsfh nfsfh;
@@ -2160,7 +2384,7 @@ static void nfs_mkdir_cb(struct rpc_context *rpc, int status, void *command_data
 	free_nfs_cb_data(data);
 }
 
-static int nfs_mkdir_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_mkdir_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	char *str = data->continue_data;
 	MKDIR3args args;
@@ -2251,7 +2475,7 @@ static void nfs_rmdir_cb(struct rpc_context *rpc, int status, void *command_data
 	free_nfs_cb_data(data);
 }
 
-static int nfs_rmdir_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_rmdir_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	char *str = data->continue_data;
 	RMDIR3args args;
@@ -2396,7 +2620,7 @@ static void nfs_creat_1_cb(struct rpc_context *rpc, int status, void *command_da
 	return;
 }
 
-static int nfs_creat_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_creat_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	char *str = data->continue_data;
 	CREATE3args args;
@@ -2487,7 +2711,7 @@ static void nfs_unlink_cb(struct rpc_context *rpc, int status, void *command_dat
 	free_nfs_cb_data(data);
 }
 
-static int nfs_unlink_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_unlink_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	char *str = data->continue_data;
 	struct REMOVE3args args;
@@ -2586,7 +2810,7 @@ static void nfs_mknod_cb(struct rpc_context *rpc, int status, void *command_data
 	free_nfs_cb_data(data);
 }
 
-static int nfs_mknod_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_mknod_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct mknod_cb_data *cb_data = data->continue_data;
 	char *str = cb_data->path;
@@ -2734,6 +2958,7 @@ static void nfs_opendir3_cb(struct rpc_context *rpc, int status, void *command_d
 			nfsdirent->ctime.tv_usec = attributes->ctime.nseconds/1000;
 			nfsdirent->uid = attributes->uid;
 			nfsdirent->gid = attributes->gid;
+			nfsdirent->nlink = attributes->nlink;
 		}
 	}
 
@@ -2840,49 +3065,54 @@ static void nfs_opendir2_cb(struct rpc_context *rpc, int status, void *command_d
 		return;
 	}
 
+	if (res->READDIR3res_u.resok.dir_attributes.attributes_follow)
+		nfsdir->attr = res->READDIR3res_u.resok.dir_attributes.post_op_attr_u.attributes;
+
 	/* steal the dirhandle */
 	nfsdir->current = nfsdir->entries;
 
-	rdpe_cb_data = malloc(sizeof(struct rdpe_cb_data));
-	rdpe_cb_data->getattrcount = 0;
-	rdpe_cb_data->status = RPC_STATUS_SUCCESS;
-	rdpe_cb_data->data = data;
-	for (nfsdirent = nfsdir->entries; nfsdirent; nfsdirent = nfsdirent->next) {
-		struct rdpe_lookup_cb_data *rdpe_lookup_cb_data;
-		LOOKUP3args args;
+	if (nfsdir->entries) {
+		rdpe_cb_data = malloc(sizeof(struct rdpe_cb_data));
+		rdpe_cb_data->getattrcount = 0;
+		rdpe_cb_data->status = RPC_STATUS_SUCCESS;
+		rdpe_cb_data->data = data;
+		for (nfsdirent = nfsdir->entries; nfsdirent; nfsdirent = nfsdirent->next) {
+			struct rdpe_lookup_cb_data *rdpe_lookup_cb_data;
+			LOOKUP3args args;
 
-		rdpe_lookup_cb_data = malloc(sizeof(struct rdpe_lookup_cb_data));
-		rdpe_lookup_cb_data->rdpe_cb_data = rdpe_cb_data;
-		rdpe_lookup_cb_data->nfsdirent = nfsdirent;
+			rdpe_lookup_cb_data = malloc(sizeof(struct rdpe_lookup_cb_data));
+			rdpe_lookup_cb_data->rdpe_cb_data = rdpe_cb_data;
+			rdpe_lookup_cb_data->nfsdirent = nfsdirent;
 
-		memset(&args, 0, sizeof(LOOKUP3args));
-		args.what.dir = data->fh;
-		args.what.name = nfsdirent->name;
+			memset(&args, 0, sizeof(LOOKUP3args));
+			args.what.dir = data->fh;
+			args.what.name = nfsdirent->name;
 
-		if (rpc_nfs3_lookup_async(nfs->rpc, nfs_opendir3_cb, &args, rdpe_lookup_cb_data) != 0) {
-			rpc_set_error(nfs->rpc, "RPC error: Failed to send READDIR LOOKUP call");
+			if (rpc_nfs3_lookup_async(nfs->rpc, nfs_opendir3_cb, &args, rdpe_lookup_cb_data) != 0) {
+				rpc_set_error(nfs->rpc, "RPC error: Failed to send READDIR LOOKUP call");
 
-			/* if we have already commands in flight, we cant just stop, we have to wait for the
-		 	 * commands in flight to complete
-		 	 */
-			if (rdpe_cb_data->getattrcount > 0) {
+				/* if we have already commands in flight, we cant just stop, we have to wait for the
+				 * commands in flight to complete
+				 */
+				if (rdpe_cb_data->getattrcount > 0) {
+					nfs_free_nfsdir(nfsdir);
+					data->continue_data = NULL;
+					free_nfs_cb_data(data);
+					rdpe_cb_data->status = RPC_STATUS_ERROR;
+					free(rdpe_lookup_cb_data);
+					return;
+				}
+
+				data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
 				nfs_free_nfsdir(nfsdir);
 				data->continue_data = NULL;
 				free_nfs_cb_data(data);
-				rdpe_cb_data->status = RPC_STATUS_ERROR;
 				free(rdpe_lookup_cb_data);
+				free(rdpe_cb_data);
 				return;
 			}
-
-			data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
-			nfs_free_nfsdir(nfsdir);
-			data->continue_data = NULL;
-			free_nfs_cb_data(data);
-			free(rdpe_lookup_cb_data);
-			free(rdpe_cb_data);
-			return;
+			rdpe_cb_data->getattrcount++;
 		}
-		rdpe_cb_data->getattrcount++;
 	}
 }
 
@@ -2969,6 +3199,7 @@ static void nfs_opendir_cb(struct rpc_context *rpc, int status, void *command_da
 			nfsdirent->ctime.tv_usec = entry->name_attributes.post_op_attr_u.attributes.ctime.nseconds/1000;
 			nfsdirent->uid = entry->name_attributes.post_op_attr_u.attributes.uid;
 			nfsdirent->gid = entry->name_attributes.post_op_attr_u.attributes.gid;
+			nfsdirent->nlink = entry->name_attributes.post_op_attr_u.attributes.nlink;
 		}
 
 		nfsdirent->next  = nfsdir->entries;
@@ -2998,6 +3229,9 @@ static void nfs_opendir_cb(struct rpc_context *rpc, int status, void *command_da
 		return;
 	}
 
+	if (res->READDIRPLUS3res_u.resok.dir_attributes.attributes_follow)
+		nfsdir->attr = res->READDIRPLUS3res_u.resok.dir_attributes.post_op_attr_u.attributes;
+
 	/* steal the dirhandle */
 	data->continue_data = NULL;
 	nfsdir->current = nfsdir->entries;
@@ -3006,9 +3240,34 @@ static void nfs_opendir_cb(struct rpc_context *rpc, int status, void *command_da
 	free_nfs_cb_data(data);
 }
 
-static int nfs_opendir_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_opendir_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	READDIRPLUS3args args;
+	struct nfsdir *nfsdir = data->continue_data;;
+	struct nfsdir *cached;
+
+	cached = nfs_dircache_find(nfs, &data->fh);
+	if (cached) {
+		if (attr && attr->mtime.seconds == cached->attr.mtime.seconds) {
+			cached->current = cached->entries;
+			data->cb(0, nfs, cached, data->private_data);
+			free_nfs_cb_data(data);
+			return 0;
+		} else {
+			/* cache must be stale */
+			nfs_free_nfsdir(cached);
+		}
+	}
+
+	nfsdir->fh.data.data_len  = data->fh.data.data_len;
+	nfsdir->fh.data.data_val = malloc(nfsdir->fh.data.data_len);
+	if (nfsdir->fh.data.data_val == NULL) {
+		rpc_set_error(nfs->rpc, "OOM when allocating fh for nfsdir");
+		data->cb(-ENOMEM, nfs, rpc_get_error(nfs->rpc), data->private_data);
+		free_nfs_cb_data(data);
+		return -1;
+	}
+	memcpy(nfsdir->fh.data.data_val, data->fh.data.data_val, data->fh.data.data_len);
 
 	args.dir = data->fh;
 	args.cookie = 0;
@@ -3058,9 +3317,9 @@ struct nfsdirent *nfs_readdir(struct nfs_context *nfs _U_, struct nfsdir *nfsdir
 /*
  * closedir()
  */
-void nfs_closedir(struct nfs_context *nfs _U_, struct nfsdir *nfsdir)
+void nfs_closedir(struct nfs_context *nfs, struct nfsdir *nfsdir)
 {
-	nfs_free_nfsdir(nfsdir);
+	nfs_dircache_add(nfs, nfsdir);
 }
 
 
@@ -3081,7 +3340,7 @@ void nfs_getcwd(struct nfs_context *nfs, const char **cwd)
 struct lseek_cb_data {
        struct nfs_context *nfs;
        struct nfsfh *nfsfh;
-       uint64_t offset;
+       int64_t offset;
        nfs_cb cb;
        void *private_data;
 };
@@ -3091,6 +3350,7 @@ static void nfs_lseek_1_cb(struct rpc_context *rpc, int status, void *command_da
 	GETATTR3res *res;
 	struct lseek_cb_data *data = private_data;
 	struct nfs_context *nfs = data->nfs;
+	uint64_t size = 0;
 
 	assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
@@ -3113,24 +3373,41 @@ static void nfs_lseek_1_cb(struct rpc_context *rpc, int status, void *command_da
 		return;
 	}
 
-	data->nfsfh->offset = data->offset + res->GETATTR3res_u.resok.obj_attributes.size;
-	data->cb(0, nfs, &data->nfsfh->offset, data->private_data);
+	size = res->GETATTR3res_u.resok.obj_attributes.size;
+
+	if (data->offset < 0 &&
+	    (uint64_t)(-data->offset) > size) {
+		data->cb(-EINVAL, nfs, &data->nfsfh->offset, data->private_data);
+	} else {
+		data->nfsfh->offset = data->offset + size;
+		data->cb(0, nfs, &data->nfsfh->offset, data->private_data);
+	}
+
 	free(data);
 }
 
-int nfs_lseek_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, int whence, nfs_cb cb, void *private_data)
+int nfs_lseek_async(struct nfs_context *nfs, struct nfsfh *nfsfh, int64_t offset, int whence, nfs_cb cb, void *private_data)
 {
 	struct lseek_cb_data *data;
 	struct GETATTR3args args;
 
 	if (whence == SEEK_SET) {
-		nfsfh->offset = offset;
-		cb(0, nfs, &nfsfh->offset, private_data);
+		if (offset < 0) {
+			cb(-EINVAL, nfs, &nfsfh->offset, private_data);
+		} else {
+			nfsfh->offset = offset;
+			cb(0, nfs, &nfsfh->offset, private_data);
+		}
 		return 0;
 	}
 	if (whence == SEEK_CUR) {
-		nfsfh->offset += offset;
-		cb(0, nfs, &nfsfh->offset, private_data);
+		if (offset < 0 &&
+		    nfsfh->offset < (uint64_t)(-offset)) {
+			cb(-EINVAL, nfs, &nfsfh->offset, private_data);
+		} else {
+			nfsfh->offset += offset;
+			cb(0, nfs, &nfsfh->offset, private_data);
+		}
 		return 0;
 	}
 
@@ -3191,11 +3468,11 @@ static void nfs_statvfs_1_cb(struct rpc_context *rpc, int status, void *command_
 		return;
 	}
 
-	svfs.f_bsize   = 4096;
-	svfs.f_frsize  = 4096;
-	svfs.f_blocks  = res->FSSTAT3res_u.resok.tbytes/4096;
-	svfs.f_bfree   = res->FSSTAT3res_u.resok.fbytes/4096;
-	svfs.f_bavail  = res->FSSTAT3res_u.resok.abytes/4096;
+	svfs.f_bsize   = NFS_BLKSIZE;
+	svfs.f_frsize  = NFS_BLKSIZE;
+	svfs.f_blocks  = res->FSSTAT3res_u.resok.tbytes/NFS_BLKSIZE;
+	svfs.f_bfree   = res->FSSTAT3res_u.resok.fbytes/NFS_BLKSIZE;
+	svfs.f_bavail  = res->FSSTAT3res_u.resok.abytes/NFS_BLKSIZE;
 	svfs.f_files   = res->FSSTAT3res_u.resok.tfiles;
 	svfs.f_ffree   = res->FSSTAT3res_u.resok.ffiles;
 #if !defined(ANDROID)
@@ -3209,7 +3486,7 @@ static void nfs_statvfs_1_cb(struct rpc_context *rpc, int status, void *command_
 	free_nfs_cb_data(data);
 }
 
-static int nfs_statvfs_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_statvfs_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	FSSTAT3args args;
 
@@ -3271,7 +3548,7 @@ static void nfs_readlink_1_cb(struct rpc_context *rpc, int status, void *command
 	free_nfs_cb_data(data);
 }
 
-static int nfs_readlink_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_readlink_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	READLINK3args args;
 
@@ -3333,7 +3610,7 @@ static void nfs_chmod_cb(struct rpc_context *rpc, int status, void *command_data
 	free_nfs_cb_data(data);
 }
 
-static int nfs_chmod_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_chmod_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	SETATTR3args args;
 
@@ -3388,7 +3665,7 @@ int nfs_fchmod_async(struct nfs_context *nfs, struct nfsfh *nfsfh, int mode, nfs
 	}
 	memcpy(data->fh.data.data_val, nfsfh->fh.data.data_val, data->fh.data.data_len);
 
-	if (nfs_chmod_continue_internal(nfs, data) != 0) {
+	if (nfs_chmod_continue_internal(nfs, NULL, data) != 0) {
 		return -1;
 	}
 
@@ -3436,7 +3713,7 @@ struct nfs_chown_data {
        gid_t gid;
 };
 
-static int nfs_chown_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_chown_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	SETATTR3args args;
 	struct nfs_chown_data *chown_data = data->continue_data;
@@ -3522,7 +3799,7 @@ int nfs_fchown_async(struct nfs_context *nfs, struct nfsfh *nfsfh, int uid, int 
 	}
 	memcpy(data->fh.data.data_val, nfsfh->fh.data.data_val, data->fh.data.data_len);
 
-	if (nfs_chown_continue_internal(nfs, data) != 0) {
+	if (nfs_chown_continue_internal(nfs, NULL, data) != 0) {
 		return -1;
 	}
 
@@ -3567,7 +3844,7 @@ static void nfs_utimes_cb(struct rpc_context *rpc, int status, void *command_dat
 	free_nfs_cb_data(data);
 }
 
-static int nfs_utimes_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_utimes_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	SETATTR3args args;
 	struct timeval *utimes_data = data->continue_data;
@@ -3705,7 +3982,7 @@ static void nfs_access_cb(struct rpc_context *rpc, int status, void *command_dat
 	free_nfs_cb_data(data);
 }
 
-static int nfs_access_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_access_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	int nfsmode = 0;
 	ACCESS3args args;
@@ -3802,7 +4079,7 @@ static void nfs_symlink_cb(struct rpc_context *rpc, int status, void *command_da
 	free_nfs_cb_data(data);
 }
 
-static int nfs_symlink_continue_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_symlink_continue_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct nfs_symlink_data *symlink_data = data->continue_data;
 	SYMLINK3args args;
@@ -3938,7 +4215,7 @@ static void nfs_rename_cb(struct rpc_context *rpc, int status, void *command_dat
 	free_nfs_cb_data(data);
 }
 
-static int nfs_rename_continue_2_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_rename_continue_2_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct nfs_rename_data *rename_data = data->continue_data;
 	RENAME3args args;
@@ -3961,7 +4238,7 @@ static int nfs_rename_continue_2_internal(struct nfs_context *nfs, struct nfs_cb
 }
 
 
-static int nfs_rename_continue_1_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_rename_continue_1_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct nfs_rename_data *rename_data = data->continue_data;
 	char* newpath = strdup(rename_data->newpath);
@@ -4108,7 +4385,7 @@ static void nfs_link_cb(struct rpc_context *rpc, int status, void *command_data,
 	free_nfs_cb_data(data);
 }
 
-static int nfs_link_continue_2_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_link_continue_2_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct nfs_link_data *link_data = data->continue_data;
 	LINK3args args;
@@ -4131,7 +4408,7 @@ static int nfs_link_continue_2_internal(struct nfs_context *nfs, struct nfs_cb_d
 }
 
 
-static int nfs_link_continue_1_internal(struct nfs_context *nfs, struct nfs_cb_data *data)
+static int nfs_link_continue_1_internal(struct nfs_context *nfs, fattr3 *attr _U_, struct nfs_cb_data *data)
 {
 	struct nfs_link_data *link_data = data->continue_data;
 
@@ -4233,6 +4510,10 @@ void nfs_set_gid(struct nfs_context *nfs, int gid) {
 	rpc_set_gid(nfs->rpc, gid);
 }
 
+void nfs_set_readahead(struct nfs_context *nfs, uint32_t v) {
+	rpc_set_readahead(nfs->rpc, v);
+}
+
 void nfs_set_error(struct nfs_context *nfs, char *error_string, ...)
 {
         va_list ap;
@@ -4317,91 +4598,6 @@ static void mount_export_4_cb(struct rpc_context *rpc, int status, void *command
 	}
 }
 
-static void mount_export_3_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct mount_cb_data *data = private_data;
-	uint32_t mount_port;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(rpc, -EFAULT, command_data, data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(rpc, -EINTR, "Command was cancelled", data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-
-	mount_port = *(uint32_t *)command_data;
-	if (mount_port == 0) {
-		rpc_set_error(rpc, "RPC error. Mount program is not available");
-		data->cb(rpc, -ENOENT, command_data, data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-
-	rpc_disconnect(rpc, "normal disconnect");
-	if (rpc_connect_async(rpc, data->server, mount_port, mount_export_4_cb, data) != 0) {
-		data->cb(rpc, -ENOMEM, command_data, data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-}
-
-static void mount_export_2_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct mount_cb_data *data = private_data;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(rpc, -EFAULT, command_data, data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(rpc, -EINTR, "Command was cancelled", data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-
-	if (rpc_pmap_getport_async(rpc, MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, mount_export_3_cb, private_data) != 0) {
-		data->cb(rpc, -ENOMEM, command_data, data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-}
-
-static void mount_export_1_cb(struct rpc_context *rpc, int status, void *command_data, void *private_data)
-{
-	struct mount_cb_data *data = private_data;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	/* Dont want any more callbacks even if the socket is closed */
-	rpc->connect_cb = NULL;
-
-	if (status == RPC_STATUS_ERROR) {
-		data->cb(rpc, -EFAULT, command_data, data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-	if (status == RPC_STATUS_CANCEL) {
-		data->cb(rpc, -EINTR, "Command was cancelled", data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-
-	if (rpc_pmap_null_async(rpc, mount_export_2_cb, data) != 0) {
-		data->cb(rpc, -ENOMEM, command_data, data->private_data);
-		free_mount_cb_data(data);
-		return;
-	}
-}
-
 int mount_getexports_async(struct rpc_context *rpc, const char *server, rpc_cb cb, void *private_data)
 {
 	struct mount_cb_data *data;
@@ -4420,7 +4616,8 @@ int mount_getexports_async(struct rpc_context *rpc, const char *server, rpc_cb c
 		free_mount_cb_data(data);
 		return -1;
 	}
-	if (rpc_connect_async(rpc, data->server, 111, mount_export_1_cb, data) != 0) {
+	if (rpc_connect_program_async(rpc, data->server, MOUNT_PROGRAM, MOUNT_V3, mount_export_4_cb, data) != 0) {
+		rpc_set_error(rpc, "Failed to start connection");
 		free_mount_cb_data(data);
 		return -1;
 	}

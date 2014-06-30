@@ -1,6 +1,31 @@
-/* based on rfc1813 and wireshark */
+/*
+Copyright (c) 2014, Ronnie Sahlberg
+All rights reserved.
 
-typedef unsigned hyper uint64;
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer. 
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The views and conclusions contained in the software and documentation are those
+of the authors and should not be interpreted as representing official policies, 
+either expressed or implied, of the FreeBSD Project.
+*/
 
 struct nlm_fh4 {
 	opaque       data<>;
@@ -29,8 +54,8 @@ struct nlm4_holder {
 	bool           exclusive;
 	unsigned int   svid;
 	nlm4_oh        oh;
-	uint64         l_offset;
-	uint64         l_len;
+	u_quad_t       l_offset;
+	u_quad_t       l_len;
 };
 
 const NLM_MAXNAME = 256;
@@ -39,8 +64,8 @@ struct nlm4_lock {
 	struct nlm_fh4 fh;
 	nlm4_oh        oh;
 	unsigned int   svid;
-	uint64         l_offset;
-	uint64         l_len;
+	u_quad_t       l_offset;
+	u_quad_t       l_len;
 };
 
 struct nlm4_share {

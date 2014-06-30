@@ -29,6 +29,10 @@
 #include "win32_compat.h"
 #endif
 
+#ifdef HAVE_SYS_SOCKET_H
+#include <sys/socket.h>
+#endif
+
 #ifdef HAVE_NET_IF_H
 #include <net/if.h>
 #endif
@@ -47,10 +51,6 @@
 
 #ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
-#endif
-
-#ifdef HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
 #endif
 
 #ifdef HAVE_POLL_H
@@ -94,11 +94,12 @@
 #include "libnfs-private.h"
 
 struct sync_cb_data {
-       int is_finished;
-       int status;
-       uint64_t offset;
-       void *return_data;
-       int return_int;
+	int is_finished;
+	int status;
+	uint64_t offset;
+	void *return_data;
+	int return_int;
+	const char *call;
 };
 
 
@@ -351,7 +352,7 @@ static void pread_cb(int status, struct nfs_context *nfs, void *data, void *priv
 	cb_data->status = status;
 
 	if (status < 0) {
-		nfs_set_error(nfs, "pread call failed with \"%s\"", (char *)data);
+		nfs_set_error(nfs, "%s call failed with \"%s\"", cb_data->call, (char *)data);
 		return;
 	}
 
@@ -365,6 +366,7 @@ int nfs_pread(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uin
 
 	cb_data.is_finished = 0;
 	cb_data.return_data = buffer;
+	cb_data.call = "pread";
 
 	if (nfs_pread_async(nfs, nfsfh, offset, count, pread_cb, &cb_data) != 0) {
 		nfs_set_error(nfs, "nfs_pread_async failed");
@@ -381,7 +383,20 @@ int nfs_pread(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uin
  */
 int nfs_read(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t count, char *buffer)
 {
-	return nfs_pread(nfs, nfsfh, nfs_get_current_offset(nfsfh), count, buffer);
+	struct sync_cb_data cb_data;
+
+	cb_data.is_finished = 0;
+	cb_data.return_data = buffer;
+	cb_data.call = "read";
+
+	if (nfs_read_async(nfs, nfsfh, count, pread_cb, &cb_data) != 0) {
+		nfs_set_error(nfs, "nfs_read_async failed");
+		return -1;
+	}
+
+	wait_for_nfs_reply(nfs, &cb_data);
+
+	return cb_data.status;
 }
 
 /*
@@ -448,10 +463,8 @@ static void pwrite_cb(int status, struct nfs_context *nfs, void *data, void *pri
 	cb_data->is_finished = 1;
 	cb_data->status = status;
 
-	if (status < 0) {
-		nfs_set_error(nfs, "pwrite call failed with \"%s\"", (char *)data);
-		return;
-	}
+	if (status < 0)
+		nfs_set_error(nfs, "%s call failed with \"%s\"", cb_data->call, (char *)data);
 }
 
 int nfs_pwrite(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, uint64_t count, char *buf)
@@ -459,6 +472,7 @@ int nfs_pwrite(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, ui
 	struct sync_cb_data cb_data;
 
 	cb_data.is_finished = 0;
+	cb_data.call = "pwrite";
 
 	if (nfs_pwrite_async(nfs, nfsfh, offset, count, buf, pwrite_cb, &cb_data) != 0) {
 		nfs_set_error(nfs, "nfs_pwrite_async failed");
@@ -475,7 +489,19 @@ int nfs_pwrite(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, ui
  */
 int nfs_write(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t count, char *buf)
 {
-	return nfs_pwrite(nfs, nfsfh, nfs_get_current_offset(nfsfh), count, buf);
+	struct sync_cb_data cb_data;
+
+	cb_data.is_finished = 0;
+	cb_data.call = "write";
+
+	if (nfs_write_async(nfs, nfsfh, count, buf, pwrite_cb, &cb_data) != 0) {
+		nfs_set_error(nfs, "nfs_write_async failed");
+		return -1;
+	}
+
+	wait_for_nfs_reply(nfs, &cb_data);
+
+	return cb_data.status;
 }
 
 
@@ -813,7 +839,7 @@ static void lseek_cb(int status, struct nfs_context *nfs, void *data, void *priv
 	}
 }
 
-int nfs_lseek(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset, int whence, uint64_t *current_offset)
+int nfs_lseek(struct nfs_context *nfs, struct nfsfh *nfsfh, int64_t offset, int whence, uint64_t *current_offset)
 {
 	struct sync_cb_data cb_data;
 
@@ -1328,7 +1354,7 @@ void free_nfs_srvr_list(struct nfs_server_list *srv)
 		free(srv);
 		srv = next;
 	}
-}	     
+}
 
 struct nfs_list_data {
        int status;
@@ -1364,7 +1390,7 @@ void callit_cb(struct rpc_context *rpc, int status, void *data _U_, void *privat
 		srv_data->status = -1;
 		return;
 	}
-	
+
 	/* check for dupes */
 	for (srvr = srv_data->srvrs; srvr; srvr = srvr->next) {
 		if (!strcmp(hostdd, srvr->addr)) {
@@ -1374,7 +1400,7 @@ void callit_cb(struct rpc_context *rpc, int status, void *data _U_, void *privat
 
 	srvr = malloc(sizeof(struct nfs_server_list));
 	if (srvr == NULL) {
-		rpc_set_error(rpc, "Malloc failed when allocating server structure");	
+		rpc_set_error(rpc, "Malloc failed when allocating server structure");
 		srv_data->status = -1;
 		return;
 	}
@@ -1399,7 +1425,7 @@ static int send_nfsd_probes(struct rpc_context *rpc, INTERFACE_INFO *InterfaceLi
 
   assert(rpc->magic == RPC_CONTEXT_MAGIC);
 
-  for(i = 0; i < numIfs; i++) 
+  for(i = 0; i < numIfs; i++)
   {
     SOCKADDR *pAddress;
     char bcdd[16];
@@ -1409,35 +1435,35 @@ static int send_nfsd_probes(struct rpc_context *rpc, INTERFACE_INFO *InterfaceLi
 
     if(pAddress->sa_family != AF_INET)
       continue;
-		
+
     nFlags = InterfaceList[i].iiFlags;
 
-    if (!(nFlags & IFF_UP)) 
+    if (!(nFlags & IFF_UP))
     {
       continue;
     }
 
-    if (nFlags & IFF_LOOPBACK) 
+    if (nFlags & IFF_LOOPBACK)
     {
       continue;
     }
 
-    if (!(nFlags & IFF_BROADCAST)) 
+    if (!(nFlags & IFF_BROADCAST))
     {
       continue;
     }
 
-    if (getnameinfo(pAddress, sizeof(struct sockaddr_in), &bcdd[0], sizeof(bcdd), NULL, 0, NI_NUMERICHOST) < 0) 
+    if (getnameinfo(pAddress, sizeof(struct sockaddr_in), &bcdd[0], sizeof(bcdd), NULL, 0, NI_NUMERICHOST) < 0)
     {
       continue;
     }
 
-    if (rpc_set_udp_destination(rpc, bcdd, 111, 1) < 0) 
+    if (rpc_set_udp_destination(rpc, bcdd, 111, 1) < 0)
     {
       return -1;
     }
 
-    if (rpc_pmap_callit_async(rpc, MOUNT_PROGRAM, 2, 0, NULL, 0, callit_cb, data) < 0) 
+    if (rpc_pmap2_callit_async(rpc, MOUNT_PROGRAM, 2, 0, NULL, 0, callit_cb, data) < 0)
     {
       return -1;
     }
@@ -1457,34 +1483,34 @@ struct nfs_server_list *nfs_find_local_servers(void)
   int nNumInterfaces = 0;
 
   rpc = rpc_init_udp_context();
-  if (rpc == NULL) 
+  if (rpc == NULL)
   {
     return NULL;
   }
 
-  if (rpc_bind_udp(rpc, "0.0.0.0", 0) < 0) 
+  if (rpc_bind_udp(rpc, "0.0.0.0", 0) < 0)
   {
     rpc_destroy_context(rpc);
     return NULL;
   }
 
-  if (WSAIoctl(rpc_get_fd(rpc), SIO_GET_INTERFACE_LIST, 0, 0, &InterfaceList, sizeof(InterfaceList), &nBytesReturned, 0, 0) == SOCKET_ERROR) 
+  if (WSAIoctl(rpc_get_fd(rpc), SIO_GET_INTERFACE_LIST, 0, 0, &InterfaceList, sizeof(InterfaceList), &nBytesReturned, 0, 0) == SOCKET_ERROR)
   {
     return NULL;
   }
 
   nNumInterfaces = nBytesReturned / sizeof(INTERFACE_INFO);
 
-  for (loop=0; loop<3; loop++) 
+  for (loop=0; loop<3; loop++)
   {
-    if (send_nfsd_probes(rpc, InterfaceList, nNumInterfaces, &data) != 0) 
+    if (send_nfsd_probes(rpc, InterfaceList, nNumInterfaces, &data) != 0)
     {
       rpc_destroy_context(rpc);
       return NULL;
     }
 
     win32_gettimeofday(&tv_start, NULL);
-    for(;;) 
+    for(;;)
     {
       int mpt;
 
@@ -1496,18 +1522,18 @@ struct nfs_server_list *nfs_find_local_servers(void)
       -    (tv_current.tv_sec *1000 + tv_current.tv_usec / 1000)
       +    (tv_start.tv_sec *1000 + tv_start.tv_usec / 1000);
 
-      if (poll(&pfd, 1, mpt) < 0) 
+      if (poll(&pfd, 1, mpt) < 0)
       {
         free_nfs_srvr_list(data.srvrs);
         rpc_destroy_context(rpc);
         return NULL;
       }
-      if (pfd.revents == 0) 
+      if (pfd.revents == 0)
       {
         break;
       }
-		
-      if (rpc_service(rpc, pfd.revents) < 0) 
+
+      if (rpc_service(rpc, pfd.revents) < 0)
       {
         break;
       }
@@ -1516,7 +1542,7 @@ struct nfs_server_list *nfs_find_local_servers(void)
 
   rpc_destroy_context(rpc);
 
-  if (data.status != 0) 
+  if (data.status != 0)
   {
     free_nfs_srvr_list(data.srvrs);
     return NULL;
@@ -1571,7 +1597,7 @@ static int send_nfsd_probes(struct rpc_context *rpc, struct ifconf *ifc, struct 
 			return -1;
 		}
 
-		if (rpc_pmap_callit_async(rpc, MOUNT_PROGRAM, 2, 0, NULL, 0, callit_cb, data) < 0) {
+		if (rpc_pmap2_callit_async(rpc, MOUNT_PROGRAM, 2, 0, NULL, 0, callit_cb, data) < 0) {
 			return -1;
 		}
 	}
@@ -1607,21 +1633,21 @@ struct nfs_server_list *nfs_find_local_servers(void)
 	while(ifc.ifc_len > (size - sizeof(struct ifreq))) {
 		size *= 2;
 
-		free(ifc.ifc_buf);	
+		free(ifc.ifc_buf);
 		ifc.ifc_len = size;
 		ifc.ifc_buf = malloc(size);
 		memset(ifc.ifc_buf, 0, size);
 		if (ioctl(rpc_get_fd(rpc), SIOCGIFCONF, (caddr_t)&ifc) < 0) {
 			rpc_destroy_context(rpc);
-			free(ifc.ifc_buf);	
+			free(ifc.ifc_buf);
 			return NULL;
 		}
-	}	
+	}
 
 	for (loop=0; loop<3; loop++) {
 		if (send_nfsd_probes(rpc, &ifc, &data) != 0) {
 			rpc_destroy_context(rpc);
-			free(ifc.ifc_buf);	
+			free(ifc.ifc_buf);
 			return NULL;
 		}
 
@@ -1645,14 +1671,14 @@ struct nfs_server_list *nfs_find_local_servers(void)
 			if (pfd.revents == 0) {
 				break;
 			}
-		
+
 			if (rpc_service(rpc, pfd.revents) < 0) {
 				break;
 			}
 		}
 	}
 
-	free(ifc.ifc_buf);	
+	free(ifc.ifc_buf);
 	rpc_destroy_context(rpc);
 
 	if (data.status != 0) {

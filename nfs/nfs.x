@@ -1,4 +1,31 @@
-/* NFS part from rfc 1813, NFSACL part is from wireshark sources */
+/*
+Copyright (c) 2014, Ronnie Sahlberg
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer. 
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The views and conclusions contained in the software and documentation are those
+of the authors and should not be interpreted as representing official policies, 
+either expressed or implied, of the FreeBSD Project.
+*/
 
 /*
  * NFS v3 Definitions
@@ -10,16 +37,7 @@ const NFS3_COOKIEVERFSIZE = 8;
 
 typedef opaque cookieverf3[NFS3_COOKIEVERFSIZE];
 
-/*unsigned hyper can be overridden by giving rpcgen -DU_INT64_PLATTFORM_TYPE="
-  where rpcgen doesn't know anything about hyper
-  default to unsigned hyper as of rfc 1813 */
-#ifndef U_INT64_PLATTFORM_TYPE
-#define U_INT64_PLATTFORM_TYPE unsigned hyper
-#endif/*U_INT64_PLATTFORM_TYPE*/
-
-typedef U_INT64_PLATTFORM_TYPE uint64;
-
-typedef uint64 cookie3;
+typedef u_quad_t cookie3;
 
 struct nfs_fh3 {
 	opaque       data<NFS3_FHSIZE>;
@@ -48,9 +66,9 @@ typedef unsigned int uid3;
 
 typedef unsigned int gid3;
 
-typedef uint64 size3;
+typedef u_quad_t size3;
 
-typedef uint64 fileid3;
+typedef u_quad_t fileid3;
 
 struct specdata3 {
 	unsigned int specdata1;
@@ -71,7 +89,7 @@ struct fattr3 {
 	size3        size;
 	size3        used;
 	specdata3    rdev;
-	uint64       fsid;
+	u_quad_t       fsid;
 	fileid3      fileid;
 	nfstime3     atime;
 	nfstime3     mtime;
@@ -124,7 +142,7 @@ enum stable_how {
 	FILE_SYNC = 2
 };
 
-typedef uint64 offset3;
+typedef u_quad_t offset3;
 
 typedef unsigned int count3;
 
