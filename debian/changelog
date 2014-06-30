@@ -1,3 +1,21 @@
+libnfs (1.9.4-1) unstable; urgency=medium
+
+  * [e1fa3e0] Add Conflicts against libnfs1 (Closes: #752142)
+  * [3236e1a] Add versioned conflict/replace (Closes: #750899)
+  * [f1f22db] Imported Upstream version 1.9.4 (Closes: #753132)
+  * [4f1598e] Update symbols
+  * [0401b13] Add Breaks instead of Conflicts
+  * [e1fa3e0] Add Conflicts against libnfs1
+  * [3236e1a] Add versioned conflict/replace (Closes: #750899)
+  * [f1f22db] Imported Upstream version 1.9.4
+  * [4f1598e] Update symbols
+  * [0401b13] Add Breaks instead of Conflicts
+  * [e200bda] Update debian/copyright with MIT/X11 (BSD Like) license
+    (Closes: #749590)
+  * [56b1efb] Add myself for packaging copyright and some minor tweaks
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 30 Jun 2014 14:42:28 +0530
+
 libnfs (1.9.3-3) unstable; urgency=medium
 
   * Upload to unstable
