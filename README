@@ -28,7 +28,7 @@ URL-FORMAT:
 Libnfs uses RFC2224 style URLs extended with libnfs specific url arguments some minor extensions.
 The basic syntax of these URLs is :
 
-nfs://<server|ipv4>/path[?arg=val[&arg=val]*]
+nfs://<server|ipv4|ipv6>/path[?arg=val[&arg=val]*]
 
 Arguments supported by libnfs are :
  tcp-syncnt=<int>  : Number of SYNs to send during the session establish
@@ -61,6 +61,14 @@ under the privilege of a non-root user account.
 This is highly non-portable so IF this works on your linux system, count
 yourself lucky.
 
+
+DOCUMENTATION
+=============
+libnfs sources ship with prebuilt manpage(s) in the doc directory.
+If you change the manpage sources you need to manually regenerate the new
+manpages by running 
+  cd doc
+  make doc
 
 FUSE
 ====

@@ -65,6 +65,16 @@ struct rpc_fragment {
 #define RPC_CONTEXT_MAGIC 0xc6e46435
 #define RPC_PARAM_UNDEFINED -1
 
+/*
+ * Queue is singly-linked but we hold on to the tail
+ */
+struct rpc_queue {
+	struct rpc_pdu *head, *tail;
+};
+
+#define HASHES 1024
+#define NFS_RA_TIMEOUT 5
+
 struct rpc_context {
 	uint32_t magic;
 	int fd;
@@ -82,9 +92,9 @@ struct rpc_context {
 	char *encodebuf;
 	int encodebuflen;
 
-	struct rpc_pdu *outqueue;
+	struct rpc_queue outqueue;
 	struct sockaddr_storage udp_src;
-	struct rpc_pdu *waitpdu;
+	struct rpc_queue waitpdu[HASHES];
 
 	uint32_t inpos;
 	uint32_t insize;
@@ -106,6 +116,7 @@ struct rpc_context {
 	int tcp_syncnt;
 	int uid;
 	int gid;
+	uint32_t readahead;
 };
 
 struct rpc_pdu {
@@ -125,6 +136,11 @@ struct rpc_pdu {
 	caddr_t zdr_decode_buf;
 	uint32_t zdr_decode_bufsize;
 };
+
+void rpc_reset_queue(struct rpc_queue *q);
+void rpc_enqueue(struct rpc_queue *q, struct rpc_pdu *pdu);
+void rpc_return_to_queue(struct rpc_queue *q, struct rpc_pdu *pdu);
+unsigned int rpc_hash_xid(uint32_t xid);
 
 struct rpc_pdu *rpc_allocate_pdu(struct rpc_context *rpc, int program, int version, int procedure, rpc_cb cb, void *private_data, zdrproc_t zdr_decode_fn, int zdr_bufsize);
 void rpc_free_pdu(struct rpc_context *rpc, struct rpc_pdu *pdu);
@@ -160,6 +176,7 @@ void rpc_unset_autoreconnect(struct rpc_context *rpc);
 void rpc_set_tcp_syncnt(struct rpc_context *rpc, int v);
 void rpc_set_uid(struct rpc_context *rpc, int uid);
 void rpc_set_gid(struct rpc_context *rpc, int gid);
+void rpc_set_readahead(struct rpc_context *rpc, uint32_t v);
 
 int rpc_add_fragment(struct rpc_context *rpc, char *data, uint64_t size);
 void rpc_free_all_fragments(struct rpc_context *rpc);
