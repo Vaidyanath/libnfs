@@ -106,6 +106,7 @@ libnfs.so.4 libnfs4 #MINVER#
  nfs_set_auth@Base 1.9.3
  nfs_set_error@Base 1.9.3
  nfs_set_gid@Base 1.9.3
+ nfs_set_readahead@Base 1.9.4
  nfs_set_tcp_syncnt@Base 1.9.3
  nfs_set_uid@Base 1.9.3
  nfs_stat64@Base 1.9.3
@@ -138,6 +139,7 @@ libnfs.so.4 libnfs4 #MINVER#
  rpc_connect_program_async@Base 1.9.3
  rpc_destroy_context@Base 1.9.3
  rpc_disconnect@Base 1.9.3
+ rpc_enqueue@Base 1.9.4
  rpc_error_all_pdus@Base 1.9.3
  rpc_free_all_fragments@Base 1.9.3
  rpc_free_pdu@Base 1.9.3
@@ -145,6 +147,7 @@ libnfs.so.4 libnfs4 #MINVER#
  rpc_get_fd@Base 1.9.3
  rpc_get_pdu_size@Base 1.9.3
  rpc_get_recv_sockaddr@Base 1.9.3
+ rpc_hash_xid@Base 1.9.4
  rpc_init_context@Base 1.9.3
  rpc_init_udp_context@Base 1.9.3
  rpc_mount1_dump_async@Base 1.9.3
@@ -240,15 +243,26 @@ libnfs.so.4 libnfs4 #MINVER#
  rpc_nsm1_stat_async@Base 1.9.3
  rpc_nsm1_unmon_async@Base 1.9.3
  rpc_nsm1_unmonall_async@Base 1.9.3
- rpc_pmap_callit_async@Base 1.9.3
- rpc_pmap_dump_async@Base 1.9.3
- rpc_pmap_getport_async@Base 1.9.3
- rpc_pmap_null_async@Base 1.9.3
- rpc_pmap_set_async@Base 1.9.3
- rpc_pmap_unset_async@Base 1.9.3
+ rpc_pmap2_callit_async@Base 1.9.4
+ rpc_pmap2_dump_async@Base 1.9.4
+ rpc_pmap2_getport_async@Base 1.9.4
+ rpc_pmap2_null_async@Base 1.9.4
+ rpc_pmap2_set_async@Base 1.9.4
+ rpc_pmap2_unset_async@Base 1.9.4
+ rpc_pmap3_callit_async@Base 1.9.4
+ rpc_pmap3_dump_async@Base 1.9.4
+ rpc_pmap3_getaddr_async@Base 1.9.4
+ rpc_pmap3_gettime_async@Base 1.9.4
+ rpc_pmap3_null_async@Base 1.9.4
+ rpc_pmap3_set_async@Base 1.9.4
+ rpc_pmap3_taddr2uaddr_async@Base 1.9.4
+ rpc_pmap3_uaddr2taddr_async@Base 1.9.4
+ rpc_pmap3_unset_async@Base 1.9.4
  rpc_process_pdu@Base 1.9.3
  rpc_queue_length@Base 1.9.3
  rpc_queue_pdu@Base 1.9.3
+ rpc_reset_queue@Base 1.9.4
+ rpc_return_to_queue@Base 1.9.4
  rpc_rquota1_getactivequota_async@Base 1.9.3
  rpc_rquota1_getquota_async@Base 1.9.3
  rpc_rquota1_null_async@Base 1.9.3
@@ -262,6 +276,7 @@ libnfs.so.4 libnfs4 #MINVER#
  rpc_set_fd@Base 1.9.3
  rpc_set_gid@Base 1.9.3
  rpc_set_next_xid@Base 1.9.3
+ rpc_set_readahead@Base 1.9.4
  rpc_set_tcp_syncnt@Base 1.9.3
  rpc_set_udp_destination@Base 1.9.3
  rpc_set_uid@Base 1.9.3
@@ -486,11 +501,18 @@ libnfs.so.4 libnfs4 #MINVER#
  zdr_nsmstat1@Base 1.9.3
  zdr_offset3@Base 1.9.3
  zdr_path2@Base 1.9.3
- zdr_pmap_call_args@Base 1.9.3
- zdr_pmap_call_result@Base 1.9.3
- zdr_pmap_dump_result@Base 1.9.3
- zdr_pmap_mapping@Base 1.9.3
- zdr_pmap_mapping_list@Base 1.9.3
+ zdr_pmap2_call_args@Base 1.9.4
+ zdr_pmap2_call_result@Base 1.9.4
+ zdr_pmap2_dump_result@Base 1.9.4
+ zdr_pmap2_mapping@Base 1.9.4
+ zdr_pmap2_mapping_list@Base 1.9.4
+ zdr_pmap3_call_args@Base 1.9.4
+ zdr_pmap3_call_result@Base 1.9.4
+ zdr_pmap3_dump_result@Base 1.9.4
+ zdr_pmap3_mapping@Base 1.9.4
+ zdr_pmap3_mapping_list@Base 1.9.4
+ zdr_pmap3_netbuf@Base 1.9.4
+ zdr_pmap3_string_result@Base 1.9.4
  zdr_post_op_attr@Base 1.9.3
  zdr_post_op_fh3@Base 1.9.3
  zdr_pre_op_attr@Base 1.9.3
@@ -511,7 +533,6 @@ libnfs.so.4 libnfs4 #MINVER#
  zdr_symlinkdata3@Base 1.9.3
  zdr_time_how@Base 1.9.3
  zdr_uid3@Base 1.9.3
- zdr_uint64@Base 1.9.3
  zdr_wcc_attr@Base 1.9.3
  zdr_wcc_data@Base 1.9.3
  zdr_writeverf3@Base 1.9.3
