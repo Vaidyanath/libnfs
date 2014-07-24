@@ -1,0 +1,25 @@
+From 18c94b4633c6157c3e75890c15ea51b73e7bf876 Mon Sep 17 00:00:00 2001
+From: Petr Salinger <Petr.Salinger@seznam.cz>
+Date: Sat, 19 Jul 2014 01:14:43 +0200
+Subject: [PATCH] Use sockaddr_in6 instead of sockaddr6_in
+
+---
+ lib/socket.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/socket.c b/lib/socket.c
+index f973f01..3f7f89f 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -506,7 +506,7 @@ static int rpc_connect_sockaddr_async(struct rpc_context *rpc, struct sockaddr_s
+ 					((struct sockaddr_in6 *)&ss)->sin6_port = port;
+ 					((struct sockaddr_in6 *)&ss)->sin6_family      = AF_INET6;
+ #ifdef HAVE_SOCKADDR_LEN
+-					((struct sockaddr_in6 *)&ss)->sin6_len = sizeof(struct sockaddr6_in);
++					((struct sockaddr_in6 *)&ss)->sin6_len = sizeof(struct sockaddr_in6);
+ #endif
+ 					break;
+ 				}
+-- 
+1.9.1
+
