@@ -1,3 +1,16 @@
+libnfs (1.9.7-1) UNRELEASED; urgency=medium
+
+  [ Balint Reczey ]
+  * Really fix FTBFS on kFreeBSD/Hurd by back-porting fix (Closes: #754646)
+  * Finalize changelog
+
+  [ vaidyanath ]
+  * Imported Upstream version 1.9.7
+
+  [ vaidy ]
+
+ -- Balint Reczey <balint@balintreczey.hu>  Fri, 26 Jun 2015 12:15:14 +0530
+
 libnfs (1.9.5-2) unstable; urgency=medium
 
   * Really fix FTBFS on kFreeBSD/Hurd by back-porting fix (Closes: #754646)
