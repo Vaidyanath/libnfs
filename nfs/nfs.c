@@ -86,7 +86,7 @@ int nfsstat3_to_errno(int error)
 	case NFS3ERR_ROFS:        return -EROFS; break;
 	case NFS3ERR_MLINK:       return -EMLINK; break;
 	case NFS3ERR_NAMETOOLONG: return -ENAMETOOLONG; break;
-	case NFS3ERR_NOTEMPTY:    return -EEXIST; break;
+	case NFS3ERR_NOTEMPTY:    return -ENOTEMPTY; break;
 	case NFS3ERR_DQUOT:       return -ERANGE; break;
 	case NFS3ERR_STALE:       return -EIO; break;
 	case NFS3ERR_REMOTE:      return -EIO; break;
@@ -697,7 +697,7 @@ int rpc_nfs_readdirplus_async(struct rpc_context *rpc, rpc_cb cb, struct nfs_fh3
 	args.cookie = cookie;
 	memcpy(&args.cookieverf, cookieverf, sizeof(cookieverf3)); 
 	args.dircount = count;
-	args.maxcount = count;
+	args.maxcount = count * 8;
 
 	return rpc_nfs3_readdirplus_async(rpc, cb, &args, private_data);
 }

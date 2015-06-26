@@ -142,6 +142,8 @@ EXTERN void nfs_destroy_context(struct nfs_context *nfs);
  *                     default it 65534 on Windows and getuid() on unixen.
  * gid=<int>         : GID value to use when talking to the server.
  *                     default it 65534 on Windows and getgid() on unixen.
+ * readahead=<int>   : Enable readahead for files and set the maximum amount
+ *                     of readahead to <int>.
  */
 /*
  * Parse a complete NFS URL including, server, path and
@@ -270,6 +272,10 @@ struct nfs_stat_64 {
 	uint64_t nfs_atime;
 	uint64_t nfs_mtime;
 	uint64_t nfs_ctime;
+	uint64_t nfs_atime_nsec;
+	uint64_t nfs_mtime_nsec;
+	uint64_t nfs_ctime_nsec;
+	uint64_t nfs_used;
 };
 
 /*
@@ -294,6 +300,35 @@ EXTERN int nfs_stat64_async(struct nfs_context *nfs, const char *path, nfs_cb cb
 EXTERN int nfs_stat64(struct nfs_context *nfs, const char *path, struct nfs_stat_64 *st);
 
 /*
+ * Async stat(<filename>)
+ *
+ * Like stat except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
+ * <0 : An error occured when trying to set up the operation. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      0 : Success.
+ *          data is struct nfs_stat_64 *
+ * -errno : An error occured.
+ *          data is the error string.
+ */
+EXTERN int nfs_lstat64_async(struct nfs_context *nfs, const char *path, nfs_cb cb, void *private_data);
+/*
+ * Sync stat(<filename>)
+ *
+ * Like stat except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *      0 : The operation was successfull.
+ * -errno : The command failed.
+ */
+EXTERN int nfs_lstat64(struct nfs_context *nfs, const char *path, struct nfs_stat_64 *st);
+
+/*
  * FSTAT()
  */
 /*
@@ -308,6 +343,7 @@ EXTERN int nfs_stat64(struct nfs_context *nfs, const char *path, struct nfs_stat
  * -errno : An error occured.
  *          data is the error string.
  */
+/* This function is deprecated. Use nfs_fstat64_async() instead */
 EXTERN int nfs_fstat_async(struct nfs_context *nfs, struct nfsfh *nfsfh, nfs_cb cb, void *private_data);
 /*
  * Sync fstat(nfsfh *)
@@ -321,7 +357,43 @@ EXTERN int nfs_fstat(struct nfs_context *nfs, struct nfsfh *nfsfh, struct __stat
 EXTERN int nfs_fstat(struct nfs_context *nfs, struct nfsfh *nfsfh, struct stat *st);
 #endif
 
+/* nfs_fstat64
+ * 64 bit version of fstat. All fields are always 64bit.
+ * Use these functions instead of nfs_fstat[_async](), especially if you
+ * have weird stat structures.
+ */
+/*
+ * FSTAT()
+ */
+/*
+ * Async fstat(nfsfh *)
+ * Function returns
+ *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
+ * <0 : An error occured when trying to set up the operation. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      0 : Success.
+ *          data is struct stat *
+ * -errno : An error occured.
+ *          data is the error string.
+ */
+EXTERN int nfs_fstat64_async(struct nfs_context *nfs, struct nfsfh *nfsfh, nfs_cb cb, void *private_data);
+/*
+ * Sync fstat(nfsfh *)
+ * Function returns
+ *      0 : The operation was successfull.
+ * -errno : The command failed.
+ */
+EXTERN int nfs_fstat64(struct nfs_context *nfs, struct nfsfh *nfsfh, struct nfs_stat_64 *st);
 
+/*
+ * UMASK() never blocks, so no special aync/async versions are available
+ */
+/*
+ * Sync umask(<mask>)
+ * Function returns the old mask.
+ */
+EXTERN uint16_t nfs_umask(struct nfs_context *nfs, uint16_t mask);
 
 /*
  * OPEN()
@@ -330,7 +402,7 @@ EXTERN int nfs_fstat(struct nfs_context *nfs, struct nfsfh *nfsfh, struct stat *
  * Async open(<filename>)
  *
  * mode is a combination of the flags :
- * O_RDOLNY, O_WRONLY, O_RDWR , O_SYNC, O_APPEND
+ * O_RDOLNY, O_WRONLY, O_RDWR , O_SYNC, O_APPEND, O_TRUNC
  *
  * Function returns
  *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
@@ -341,6 +413,7 @@ EXTERN int nfs_fstat(struct nfs_context *nfs, struct nfsfh *nfsfh, struct stat *
  * O_RDONLY
  * O_WRONLY
  * O_RDWR
+ * O_SYNC
  * O_TRUNC (Only valid with O_RDWR or O_WRONLY. Ignored otherwise.)
  *
  * When the callback is invoked, status indicates the result:
@@ -682,6 +755,34 @@ EXTERN int nfs_creat_async(struct nfs_context *nfs, const char *path, int mode, 
  */
 EXTERN int nfs_creat(struct nfs_context *nfs, const char *path, int mode, struct nfsfh **nfsfh);
 
+/*
+ * Async create()
+ *
+ * Same as nfs_creat_async but allows passing flags:
+ * O_APPEND
+ * O_SYNC
+ * O_EXCL
+ * O_TRUNC
+ *
+ * Function returns
+ *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
+ * <0 : An error occured when trying to set up the operation. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      0 : Success.
+ *          data is a struct *nfsfh;
+ * -errno : An error occured.
+ *          data is the error string.
+ */
+EXTERN int nfs_create_async(struct nfs_context *nfs, const char *path, int flags, int mode, nfs_cb cb, void *private_data);
+/*
+ * Sync create()
+ * Function returns
+ *      0 : Success
+ * -errno : An error occured.
+ */
+EXTERN int nfs_create(struct nfs_context *nfs, const char *path, int flags, int mode, struct nfsfh **nfsfh);
+
 
 /*
  * MKNOD()
@@ -786,6 +887,14 @@ struct nfsdirent  {
        uint32_t uid;
        uint32_t gid;
        uint32_t nlink;
+       uint64_t dev;
+       uint64_t rdev;
+       uint64_t blksize;
+       uint64_t blocks;
+       uint64_t used;
+       uint32_t atime_nsec;
+       uint32_t mtime_nsec;
+       uint32_t ctime_nsec;
 };
 /*
  * nfs_readdir() never blocks, so no special sync/async versions are available
@@ -924,6 +1033,34 @@ EXTERN int nfs_chmod_async(struct nfs_context *nfs, const char *path, int mode, 
  * -errno : The command failed.
  */
 EXTERN int nfs_chmod(struct nfs_context *nfs, const char *path, int mode);
+/*
+ * Async chmod(<name>)
+ *
+ * Like chmod except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
+ * <0 : An error occured when trying to set up the operation. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      0 : Success.
+ *          data is NULL
+ * -errno : An error occured.
+ *          data is the error string.
+ */
+EXTERN int nfs_lchmod_async(struct nfs_context *nfs, const char *path, int mode, nfs_cb cb, void *private_data);
+/*
+ * Sync chmod(<name>)
+ *
+ * Like chmod except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *      0 : The operation was successfull.
+ * -errno : The command failed.
+ */
+EXTERN int nfs_lchmod(struct nfs_context *nfs, const char *path, int mode);
 
 
 
@@ -976,6 +1113,34 @@ EXTERN int nfs_chown_async(struct nfs_context *nfs, const char *path, int uid, i
  * -errno : The command failed.
  */
 EXTERN int nfs_chown(struct nfs_context *nfs, const char *path, int uid, int gid);
+/*
+ * Async chown(<name>)
+ *
+ * Like chown except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
+ * <0 : An error occured when trying to set up the operation. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      0 : Success.
+ *          data is NULL
+ * -errno : An error occured.
+ *          data is the error string.
+ */
+EXTERN int nfs_lchown_async(struct nfs_context *nfs, const char *path, int uid, int gid, nfs_cb cb, void *private_data);
+/*
+ * Sync chown(<name>)
+ *
+ * Like chown except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *      0 : The operation was successfull.
+ * -errno : The command failed.
+ */
+EXTERN int nfs_lchown(struct nfs_context *nfs, const char *path, int uid, int gid);
 
 
 
@@ -1029,6 +1194,34 @@ EXTERN int nfs_utimes_async(struct nfs_context *nfs, const char *path, struct ti
  * -errno : The command failed.
  */
 EXTERN int nfs_utimes(struct nfs_context *nfs, const char *path, struct timeval *times);
+/*
+ * Async utimes(<path>)
+ *
+ * Like utimes except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
+ * <0 : An error occured when trying to set up the operation. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      0 : Success.
+ *          data is NULL
+ * -errno : An error occured.
+ *          data is the error string.
+ */
+EXTERN int nfs_lutimes_async(struct nfs_context *nfs, const char *path, struct timeval *times, nfs_cb cb, void *private_data);
+/*
+ * Sync utimes(<path>)
+ *
+ * Like utimes except if the destination is a symbolic link, it acts on the
+ * symbolic link itself.
+ *
+ * Function returns
+ *      0 : The operation was successfull.
+ * -errno : The command failed.
+ */
+EXTERN int nfs_lutimes(struct nfs_context *nfs, const char *path, struct timeval *times);
 
 
 /*
@@ -1082,6 +1275,36 @@ EXTERN int nfs_access_async(struct nfs_context *nfs, const char *path, int mode,
  * -errno : The command failed.
  */
 EXTERN int nfs_access(struct nfs_context *nfs, const char *path, int mode);
+
+
+
+
+
+/*
+ * ACCESS2()
+ */
+/*
+ * Async access2(<path>)
+ * Function returns
+ *  0 : The operation was initiated. Once the operation finishes, the callback will be invoked.
+ * <0 : An error occured when trying to set up the operation. The callback will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      >= 0 : A mask of R_OK, W_OK and X_OK indicating which permissions are
+ *             available.
+ *             data is NULL
+ * -errno : An error occured.
+ *          data is the error string.
+ */
+EXTERN int nfs_access2_async(struct nfs_context *nfs, const char *path, nfs_cb cb, void *private_data);
+/*
+ * Sync access(<path>)
+ * Function returns
+ *      >= 0 : A mask of R_OK, W_OK and X_OK indicating which permissions are
+ *             available.
+ * -errno : The command failed.
+ */
+EXTERN int nfs_access2(struct nfs_context *nfs, const char *path);
 
 
 
@@ -1195,13 +1418,6 @@ EXTERN int mount_getexports_async(struct rpc_context *rpc, const char *server, r
 EXTERN struct exportnode *mount_getexports(const char *server);
 
 EXTERN void mount_free_export_list(struct exportnode *exports);
-
-
-//qqq replace later with lseek(cur, 0)
-uint64_t nfs_get_current_offset(struct nfsfh *nfsfh);
-
-
-
 
 
 struct nfs_server_list {

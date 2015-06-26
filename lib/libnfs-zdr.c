@@ -20,6 +20,10 @@
  * i.e. zdrmem_create() buffers.
  * It aims to be compatible with normal rpcgen generated functions.
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #ifdef WIN32
 #include "win32_compat.h"
 #endif
@@ -28,10 +32,18 @@
 #include "aros_compat.h"
 #endif
 
+#ifdef HAVE_ARPA_INET_H
+#include <arpa/inet.h>
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include "libnfs-zdr.h"
+#include "libnfs.h"
+#include "libnfs-raw.h"
+#include "libnfs-private.h"
 
 struct opaque_auth _null_auth;
 
@@ -106,7 +118,7 @@ bool_t libnfs_zdr_int(ZDR *zdrs, int32_t *i)
 	return libnfs_zdr_u_int(zdrs, (uint32_t *)i);
 }
 
-bool_t libnfs_zdr_u_quad_t(ZDR *zdrs, uint64_t *u)
+bool_t libnfs_zdr_uint64_t(ZDR *zdrs, uint64_t *u)
 {
 	if (zdrs->pos + 8 > zdrs->size) {
 		return FALSE;
@@ -133,9 +145,9 @@ bool_t libnfs_zdr_u_quad_t(ZDR *zdrs, uint64_t *u)
 	return FALSE;
 }
 
-bool_t libnfs_zdr_quad_t(ZDR *zdrs, int64_t *i)
+bool_t libnfs_zdr_int64_t(ZDR *zdrs, int64_t *i)
 {
-	return libnfs_zdr_u_quad_t(zdrs, (uint64_t *)i);
+	return libnfs_zdr_uint64_t(zdrs, (uint64_t *)i);
 }
 
 bool_t libnfs_zdr_bytes(ZDR *zdrs, char **bufp, uint32_t *size, uint32_t maxsize)

@@ -1,5 +1,5 @@
 AC_PREREQ(2.50)
-AC_INIT([libnfs], [1.9.5], [ronniesahlberg@gmail.com])
+AC_INIT([libnfs], [1.9.7], [ronniesahlberg@gmail.com])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign])
 AC_CANONICAL_HOST
@@ -72,10 +72,8 @@ case $host in
   *solaris*)
     AC_CHECK_HEADERS([sys/filio.h])
     AC_CHECK_HEADERS([sys/sockio.h])
-    if test x$ENABLE_EXAMPLES = xyes; then
-      AC_CHECK_LIB([socket], [main], , [AC_MSG_ERROR([Can not find required library])])
-      AC_CHECK_LIB([nsl],    [main], , [AC_MSG_ERROR([Can not find required library])])
-    fi
+    AC_CHECK_LIB([socket], [main], , [AC_MSG_ERROR([Can not find required library])])
+    AC_CHECK_LIB([nsl],    [main], , [AC_MSG_ERROR([Can not find required library])])
     ;;
   *)
     ;;
@@ -152,6 +150,11 @@ AC_CHECK_MEMBER([struct sockaddr_storage.ss_family],
 #include <sys/types.h>
 #include <sys/socket.h>
 ])
+
+AC_CHECK_MEMBERS([struct stat.st_mtim.tv_nsec])
+
+# check where makedev is defined
+AC_HEADER_MAJOR
 
 #output
 AC_CONFIG_FILES([Makefile]
