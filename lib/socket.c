@@ -46,6 +46,10 @@
 #include <sys/socket.h>
 #endif
 
+#ifdef HAVE_NETINET_IN_H
+#include <netinet/in.h>
+#endif
+
 #ifdef HAVE_NETINET_TCP_H
 #include <netinet/tcp.h>
 #endif
@@ -68,6 +72,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 #include <sys/types.h>
 #include "libnfs-zdr.h"
 #include "libnfs.h"
@@ -104,7 +109,7 @@ static void set_nolinger(int fd)
 }
 
 #ifdef HAVE_NETINET_TCP_H
-int set_tcp_sockopt(int sockfd, int optname, int value)
+static int set_tcp_sockopt(int sockfd, int optname, int value)
 {
 	int level;
 
@@ -506,7 +511,7 @@ static int rpc_connect_sockaddr_async(struct rpc_context *rpc, struct sockaddr_s
 					((struct sockaddr_in6 *)&ss)->sin6_port = port;
 					((struct sockaddr_in6 *)&ss)->sin6_family      = AF_INET6;
 #ifdef HAVE_SOCKADDR_LEN
-					((struct sockaddr_in6 *)&ss)->sin6_len = sizeof(struct sockaddr6_in);
+					((struct sockaddr_in6 *)&ss)->sin6_len = sizeof(struct sockaddr_in6);
 #endif
 					break;
 				}

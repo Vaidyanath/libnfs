@@ -35,9 +35,13 @@ WSADATA wsaData;
 #include <inttypes.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 #ifndef AROS
+#ifdef ANDROID
+#define statvfs statfs
+#include <sys/vfs.h>
+#else
 #include <sys/statvfs.h>
+#endif
 #endif
 #endif
 
@@ -95,7 +99,7 @@ void process_dir(struct nfs_context *nfs, char *dir, int level) {
 		printf("Recursion detected!\n");
 		exit(10);
 	}
-	
+
 	ret = nfs_opendir(nfs, dir, &nfsdir);
 	if (ret != 0) {
 		printf("Failed to opendir(\"%s\") %s\n", dir, nfs_get_error(nfs));
@@ -110,11 +114,9 @@ void process_dir(struct nfs_context *nfs, char *dir, int level) {
 		snprintf(path, 1024, "%s/%s", dir, nfsdirent->name);
 
 		switch (nfsdirent->mode & S_IFMT) {
-#ifndef WIN32
 		case S_IFLNK:
 			printf("l");
 			break;
-#endif
 		case S_IFREG:
 			printf("-");
 			break;
@@ -149,7 +151,7 @@ void process_dir(struct nfs_context *nfs, char *dir, int level) {
 		printf(" %12" PRId64, nfsdirent->size);
 
 		printf(" %s\n", path + 1);
-		
+
 		if (recursive && (nfsdirent->mode & S_IFMT) == S_IFDIR) {
 			process_dir(nfs, path, level - 1);
 		}
